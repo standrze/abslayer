@@ -118,7 +118,7 @@ This validation did not run model inference, the full MLX build, Linux builds,
 or live model-driven Pool/Codex sessions.
 
 A separate [Laguna XS 2.1 development smoke](Documentation/LagunaBaseline.md)
-ran three defensive prompts on a Linux RTX 4090. All returned complete model
+retains two defensive prompt cases run on a Linux RTX 4090. Both returned complete model
 responses, but review found material code defects in each. This was direct
 inference, not a controller integration test or held-out capability benchmark.
 

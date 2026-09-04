@@ -1,0 +1,2 @@
+# Dependency patches contain significant context prefixes. Preserve their bytes.
+Patches/*.patch -text -whitespace

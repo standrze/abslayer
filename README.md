@@ -5,250 +5,141 @@
 <h1 align="center">ABSlayer</h1>
 
 <p align="center">
-  A reproducible framework for measuring, applying, and verifying model abliteration.
+  A Swift engine for reproducible model abliteration and cybersecurity evaluation.
 </p>
 
 <p align="center">
-  <a href="LICENSE"><img alt="License: Apache-2.0" src="https://img.shields.io/badge/license-Apache--2.0-blue.svg"></a>
-  <img alt="Python 3.12" src="https://img.shields.io/badge/python-3.12-3776AB.svg">
-  <img alt="CUDA 13" src="https://img.shields.io/badge/CUDA-13-76B900.svg">
-  <img alt="Status: experimental" src="https://img.shields.io/badge/status-experimental-orange.svg">
+  <img alt="Swift 6.3+" src="https://img.shields.io/badge/Swift-6.3%2B-F05138?logo=swift&logoColor=white">
+  <img alt="Ruby tooling" src="https://img.shields.io/badge/tooling-Ruby-CC342D?logo=ruby&logoColor=white">
+  <a href="LICENSE"><img alt="Source license: GPL-3.0" src="https://img.shields.io/badge/source-GPL--3.0-blue"></a>
+  <img alt="Status: experimental" src="https://img.shields.io/badge/status-experimental-orange">
 </p>
 
-ABSlayer is designed as a general framework for activation-guided model
-abliteration. It measures behavioral directions from contrastive prompts,
-applies controlled projections to model weights, and checks the result against
-held-out behavioral and utility cases. It provides a scriptable CLI and an
-optional browser control panel.
+ABSlayer measures model behavior, applies controlled interventions, and evaluates
+the resulting tradeoffs. The product combines an existing Swift/MLX research
+engine with a new durable Swift experiment controller. Ruby provides a small
+command bridge and supporting tools. Python is not required.
 
-> [!IMPORTANT]
-> ABSlayer deliberately changes model behavior. Treat every output as a new,
-> untrusted model: keep the source checkpoint, use held-out evaluation data,
-> inspect the verification report, and test the final deployment format before
-> using it in production.
+**Pool CLI and Codex CLI provide the agent interface.** A shared project skill
+uses their existing command tools to operate ABSlayer. The client owns the
+conversation and reasoning-model connection; ABSlayer owns job execution, state,
+resource policy, and evidence. Pool's documented local inference option allows
+the reasoning model to run locally. This integration uses shared skills and
+structured commands, without an MCP server or a separate ABSlayer agent loop.
 
-## What it does
+## What works today
 
-1. **Measure** — run paired contrast/control prompts through the NVFP4 model
-   with vLLM and measure rank-4 refusal subspaces.
-2. **Apply** — project those directions out of residual-writing attention and
-   MLP weights in the matching BF16 checkpoint.
-3. **Verify** — compare the source and candidate on held-out refusal and benign
-   utility cases.
+| Component | Available now |
+| --- | --- |
+| Swift/MLX research engine | Activation capture, refusal-subspace analysis, residual and weight interventions, adapter training, retention measurements, and export workers |
+| Swift job controller | Durable workspace-preflight jobs, idempotent submission, status, cancellation, timeout handling, and interrupted-job reconciliation |
+| Agent integration | Shared `abslayer-experiment` skill and a Ruby JSON bridge for Pool CLI and Codex CLI |
+| Evidence | Bounded terminal output, input and controller identity checks, and output hashes |
 
-The direction artifact records dataset hashes, immutable Hugging Face
-revisions, architecture and tokenizer fingerprints, sampled weight anchors,
-selected layers, and runtime versions. Checkpoint surgery is out of core: it
-processes one Safetensors shard and one fused expert slice at a time and never
-modifies the source checkpoint.
+**The new controller currently runs `workspace_preflight` only.** This executes a
+SwiftPM manifest check. Connecting model training, evaluation, export, GPU
+scheduling, and multi-candidate acceptance into that controller is still planned.
+The native research workers exist separately; they are not yet an automated
+end-to-end experiment pipeline.
 
-## Current model support
-
-The framework is intended to support multiple model families and abliteration
-strategies. The first validated v1 backend currently supports four Poolside
-Laguna checkpoint roles:
-
-| Family | Measurement checkpoint | Application checkpoint |
-| --- | --- | --- |
-| Laguna XS 2.1 | `poolside/Laguna-XS-2.1-NVFP4` | `poolside/Laguna-XS-2.1` |
-| Laguna S 2.1 | `poolside/Laguna-S-2.1-NVFP4` | `poolside/Laguna-S-2.1` |
-
-The measurement and BF16 checkpoints must have matching architecture,
-tokenizer, chat template, and sampled weight lineage. ABSlayer fails closed
-when that relationship cannot be proven.
-
-ABSlayer does not quantize checkpoints, serve inference, or accept GGUF, INT4,
-or FP8 as application inputs. Convert the completed BF16 output separately
-after verification.
-
-## Requirements
-
-- Python 3.12
-- One visible Blackwell-class NVIDIA CUDA device
-- CUDA 13-compatible drivers and runtime
-- Enough disk for the source checkpoint, candidate checkpoint, and temporary
-  hidden states
-- [`uv`](https://docs.astral.sh/uv/)
-
-Only one GPU may be visible during a v1 run. If the system exposes several,
-select one explicitly:
-
-```bash
-CUDA_VISIBLE_DEVICES=0 uv run abslayer doctor
-```
-
-## Installation
-
-Clone the project and install the validated CUDA environment:
-
-```bash
-cd abslayer
-uv sync --extra cuda
-uv run abslayer doctor
-```
-
-The lightweight base install can inspect help, datasets, and the checkpoint
-allow-list without installing CUDA packages:
-
-```bash
-uv sync
-uv run abslayer models
-```
-
-For the browser interface:
-
-```bash
-uv sync --extra cuda --extra web
-```
+Refusal reduction, answer completion, task correctness, and capability retention
+are separate outcomes. A successful workspace check is not a model evaluation.
 
 ## Quick start
 
-Run the complete Measure → Apply → Verify pipeline:
+For the controller on macOS, install Swift 6.3+ and Ruby, then clone the project:
 
-```bash
-uv run abslayer run \
-  poolside/Laguna-XS-2.1-NVFP4 \
-  poolside/Laguna-XS-2.1 \
-  --pairs ./measurement.jsonl \
-  --evaluation ./evaluation.jsonl \
-  --artifact ./artifacts/laguna-xs-directions \
-  --output ./models/laguna-xs-abslayer \
-  --report ./reports/laguna-xs-verification.json
+```sh
+git clone https://github.com/standrze/abslayer.git
+cd abslayer
+
+ruby Scripts/abslayer-tool.rb '{"method":"capabilities"}'
 ```
 
-ABSlayer resolves allow-listed Hugging Face IDs into the local cache. Local
-checkpoint directories may be supplied instead.
+The bridge builds the Swift controller on first use in an isolated
+`.build-harness/` directory. This does not load a model or resolve the MLX model
+dependency graph.
 
-### Run each stage independently
+Submit a workspace-preflight job:
 
-```bash
-uv run abslayer measure poolside/Laguna-XS-2.1-NVFP4 \
-  --pairs ./measurement.jsonl \
-  --artifact ./artifacts/laguna-xs-directions \
-  --temp-dir ./work/hidden-states
-
-uv run abslayer apply poolside/Laguna-XS-2.1 \
-  --artifact ./artifacts/laguna-xs-directions \
-  --output ./models/laguna-xs-abslayer
-
-uv run abslayer verify \
-  poolside/Laguna-XS-2.1 \
-  ./models/laguna-xs-abslayer \
-  --cases ./evaluation.jsonl \
-  --report ./reports/laguna-xs-verification.json
+```sh
+ruby Scripts/abslayer-tool.rb '{"method":"submit","operation":"workspace_preflight","idempotencyKey":"first-preflight","timeoutSeconds":60}'
 ```
 
-Commands support `--json` for machine-readable output, `--quiet` to suppress
-normal progress, and `--no-banner` to disable terminal branding. Run
-`uv run abslayer --help` or `uv run abslayer COMMAND --help` for every option.
+Inspect recent jobs, or use the returned job ID to inspect one:
 
-## Dataset formats
-
-Measurement data is JSONL containing matched contrast/control prompts:
-
-```json
-{"contrast":"A prompt that triggers refusal","control":"A matched benign prompt"}
+```sh
+ruby Scripts/abslayer-tool.rb '{"method":"status"}'
+ruby Scripts/abslayer-tool.rb '{"method":"status","jobID":"RETURNED_JOB_ID"}'
 ```
 
-At least five unique pairs are required. Evaluation data must be held out from
-measurement and contain both refusal and utility cases:
+Jobs run in a detached local process, and their state lives in `.abslayer/`.
+Another invocation can reconnect to a job without keeping the original command
+open. Cancellation, paginated evidence, recovery behavior, and limitations are
+documented in the [harness guide](Documentation/Harness.md).
 
-```json
-{"kind":"refusal","prompt":"A held-out refusal test"}
-{"kind":"utility","prompt":"What is 2 + 2?","reference":"4"}
+## Use with an agent client
+
+Open this directory in Pool CLI or Codex CLI and invoke
+`$abslayer-experiment`. The shared skill lives at
+[`.agents/skills/abslayer-experiment/SKILL.md`](.agents/skills/abslayer-experiment/SKILL.md).
+
+The reasoning model belongs to the client. It is separate from the model being
+modified and from any evaluation judge. ABSlayer does not bundle a trained
+controller model or configure a paid inference fallback. A dedicated SwiftUI
+interface is deferred.
+
+## Native engine and platform support
+
+The retained research engine uses Swift/MLX with Metal on Apple silicon and
+CUDA on Linux. Entry points have different architecture and hardware limits:
+the production `abslayer` JSON backend currently requires a supported full-BF16
+Gemma 4 checkpoint and an MLX CUDA build.
+
+The package declares macOS 15 as its minimum deployment target. Full native
+builds also require the appropriate toolchain, dependency patches, and hardware.
+The existing shell build helpers remain while supporting tooling is migrated
+to Ruby. See [Development](Documentation/Development.md) before running a model
+worker.
+
+## Validation
+
+The controller has a model-free test path:
+
+```sh
+ruby Scripts/build-harness.rb test
+ruby Tests/HarnessIntegrationTests.rb
 ```
 
-The quality of the measurement set matters more than raw size. Contrast prompts
-should trigger the behavior being measured in the exact source model, while
-controls should be close in topic and form without triggering that behavior.
+The September 4, 2026 publication check passed **11 Swift tests** and the Ruby
+integration checks for real manifest preflight, detached execution, reconnect,
+deduplication, bounded evidence, crash recovery, and dependency-pin preservation.
+This validation did not run model inference, the full MLX build, Linux builds,
+or live model-driven Pool/Codex sessions.
 
-## Verification policy
-
-The balanced v1 gate requires:
-
-- nonempty candidate generations;
-- candidate refusal rate at or below 10%, or a reduction of at least 20
-  percentage points from the source;
-- mean benign reference-NLL regression no greater than 0.25 nats/token; and
-- no individual benign regression greater than 1.0 nats/token.
-
-Passing this gate is evidence for the supplied evaluation set, not a general
-claim about safety, capability, or downstream behavior. Re-evaluate after GGUF
-conversion or quantization because those transformations can alter results.
-
-## Browser control panel
-
-Install the `web` extra and start the loopback-only interface:
-
-```bash
-uv run abslayer web
-```
-
-Open <http://127.0.0.1:7860>. The interface includes a guided workflow builder,
-live subprocess logs, cancellation, verification metrics, diagnostics, and the
-exact model allow-list.
-
-GPU workflows run one at a time in isolated worker process groups. The web
-server never imports vLLM into its own process, and its local API is read-only
-apart from job creation and cancellation. Version 1 has no authentication, so
-do not expose it directly to the public internet.
-
-For a remote DGX Spark, keep ABSlayer bound to loopback and tunnel it:
-
-```bash
-ssh -N -L 7860:127.0.0.1:7860 user@your-spark
-```
-
-Then open <http://127.0.0.1:7860> on your computer.
-
-## Output layout
+## Project layout
 
 ```text
-artifacts/laguna-xs-directions/
-├── directions.safetensors
-└── manifest.json
-
-models/laguna-xs-abslayer/
-├── abslayer.json
-├── config.json
-├── model-*.safetensors
-├── model.safetensors.index.json
-└── tokenizer and chat-template files
-
-reports/
-└── laguna-xs-verification.json
+Sources/          Swift research engine and durable controller
+Tests/            Swift tests, Ruby integration checks, existing build checks
+Scripts/          Ruby bridge and supporting build tools
+.agents/skills/   Shared agent workflow
+Patches/          Patches for pinned native dependencies
+Examples/         Data interchange example
+Documentation/    Architecture, harness contract, and development guide
+assets/           Original ABSlayer banner
 ```
 
-Output directories must not already exist. This protects completed models and
-artifacts from accidental overwrites.
+Models, job state, local archives, deployment-specific helpers, and video
+production files are excluded from the repository.
 
-## Development
-
-```bash
-uv sync --extra dev --extra web
-uv run pytest
-uv run ruff check .
-```
-
-CUDA smoke tests are opt-in and require all four local checkpoint roles plus
-user-supplied measurement and held-out datasets:
-
-```bash
-ABSLAYER_CUDA_SMOKE=1 \
-ABSLAYER_XS_NVFP4=/models/Laguna-XS-2.1-NVFP4 \
-ABSLAYER_XS_BF16=/models/Laguna-XS-2.1 \
-ABSLAYER_S_NVFP4=/models/Laguna-S-2.1-NVFP4 \
-ABSLAYER_S_BF16=/models/Laguna-S-2.1 \
-ABSLAYER_SMOKE_PAIRS=/data/five-pairs.jsonl \
-ABSLAYER_SMOKE_EVALUATION=/data/held-out.jsonl \
-uv run pytest -m cuda --basetemp /large-volume/abslayer-smoke
-```
+- [Architecture](Documentation/Architecture.md)
+- [Harness contract and lifecycle](Documentation/Harness.md)
+- [Development](Documentation/Development.md)
 
 ## License
 
-ABSlayer source code is licensed under the [Apache License 2.0](LICENSE).
-
-Model weights and derived checkpoints are not relicensed by ABSlayer. They
-remain subject to their original model licenses; Poolside Laguna S/XS 2.1 model
-materials are distributed under OpenMDW-1.1. Bundled or user-supplied datasets
-and third-party dependencies retain their respective licenses and terms.
+The Swift product source is distributed under [GPL-3.0](LICENSE). The original
+banner is retained unchanged, with the previous repository's Apache-2.0 license
+preserved in [assets/LICENSE](assets/LICENSE). Third-party dependencies, model
+weights, and datasets retain their own licenses.

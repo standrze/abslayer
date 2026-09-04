@@ -1,0 +1,36 @@
+diff --git a/Libraries/MLXLLM/Models/Gemma4Text.swift b/Libraries/MLXLLM/Models/Gemma4Text.swift
+--- a/Libraries/MLXLLM/Models/Gemma4Text.swift
++++ b/Libraries/MLXLLM/Models/Gemma4Text.swift
+@@ -674,6 +674,11 @@ private class Gemma4TextExperts: Module {
+ ///
+ /// Exposed at `@_spi(GemmaEncoder)` scope for encoder-style client taps.
+ @_spi(GemmaEncoder) public class Gemma4TextModelInner: Module {
++    /// Optional diagnostic transform applied to the residual stream after a decoder layer.
++    /// ABSlayer installs this only for serial, local evaluation and removes it afterwards.
++    @_spi(GemmaEncoder) public var residualIntervention:
++        (@Sendable (_ layer: Int, _ state: MLXArray) -> MLXArray)?
++
+     @_spi(GemmaEncoder) public let config: Gemma4TextConfiguration
+     /// Multiplier applied to the token embeddings.
+     ///
+@@ -833,7 +838,7 @@ private class Gemma4TextExperts: Module {
+                 sharedKV: sharedKV,
+                 positionOffset: sharedPositionOffset
+             )
+-            h = out
++            h = residualIntervention?(idx, out) ?? out
+             intermediates[idx] = (kvPair, positionOffset)
+         }
+ 
+@@ -894,9 +899,9 @@ private class Gemma4TextExperts: Module {
+                 sharedKV: intermediates[previous].kv,
+                 positionOffset: intermediates[previous].positionOffset
+             )
+-            h = out
++            h = residualIntervention?(index, out) ?? out
+             intermediates[index] = (kvPair, positionOffset)
+-            states.append(out)
++            states.append(h)
+         }
+         return states
+     }

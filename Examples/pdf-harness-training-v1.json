@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "datasetName": "example-condensed-manual",
+  "records": [
+    {
+      "id": "manual-p12-reset",
+      "instruction": "How do I reset the controller after an overload?",
+      "response": "Disconnect input power, wait for the status light to turn off, clear the overload, and reconnect power.",
+      "provenance": {
+        "document": "controller-manual.pdf",
+        "pages": [12]
+      }
+    },
+    {
+      "id": "manual-p13-startup",
+      "instruction": "How do I start the controller after completing a reset?",
+      "response": "Reconnect input power, confirm the status light is steady, and press the Start control.",
+      "provenance": {
+        "document": "controller-manual.pdf",
+        "pages": [13]
+      }
+    }
+  ]
+}

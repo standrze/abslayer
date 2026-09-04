@@ -1,0 +1,79 @@
+diff --git a/Libraries/MLXLLM/Models/Gemma4Text.swift b/Libraries/MLXLLM/Models/Gemma4Text.swift
+--- a/Libraries/MLXLLM/Models/Gemma4Text.swift
++++ b/Libraries/MLXLLM/Models/Gemma4Text.swift
+@@ -836,6 +836,66 @@ private class Gemma4TextExperts: Module {
+ 
+         return norm(h)
+     }
++
++    /// Runs the uncached text path and returns the residual stream after every decoder
++    /// layer. This SPI is read-only and preserves Gemma 4's PLE, masks, and KV sharing.
++    @_spi(GemmaEncoder) public func layerHiddenStates(_ inputs: MLXArray) -> [MLXArray] {
++        let inputEmbeddings = embedTokens(inputs)
++        var h = inputEmbeddings * embedScale
++
++        var perLayerInputs: [MLXArray?]
++        if hiddenSizePerLayerInput > 0,
++            let embedPerLayer = embedTokensPerLayer,
++            let modelProj = perLayerModelProjection,
++            let projNorm = perLayerProjectionNorm
++        {
++            let tokenPLE = embedPerLayer(inputs)
++                * Float(config.hiddenSizePerLayerInput).squareRoot()
++            let reshapedTokenPLE = tokenPLE.reshaped(
++                tokenPLE.dim(0), tokenPLE.dim(1),
++                config.numHiddenLayers, config.hiddenSizePerLayerInput)
++            let modelPLE = (modelProj(h) * perLayerProjectionScale).reshaped(
++                h.dim(0), h.dim(1),
++                config.numHiddenLayers, config.hiddenSizePerLayerInput)
++            let normedModelPLE = projNorm(modelPLE)
++            let combined = (normedModelPLE + reshapedTokenPLE) * pow(Float(2.0), -0.5)
++            perLayerInputs = (0 ..< config.numHiddenLayers).map { index in
++                combined[.ellipsis, index, 0...]
++            }
++        } else {
++            perLayerInputs = Array(repeating: nil, count: config.numHiddenLayers)
++        }
++
++        var maskByType = [String: MLXFast.ScaledDotProductAttentionMaskMode]()
++        for layer in layers where maskByType[layer.layerType] == nil {
++            if layer.layerType == "sliding_attention" {
++                maskByType[layer.layerType] = createAttentionMask(
++                    h: h, cache: nil, windowSize: config.slidingWindow)
++            } else {
++                maskByType[layer.layerType] = createAttentionMask(h: h, cache: nil)
++            }
++        }
++
++        var intermediates = [(kv: Gemma4SharedKVState?, positionOffset: RoPEOffset?)](
++            repeating: (nil, nil), count: config.numHiddenLayers)
++        var states = [MLXArray]()
++        states.reserveCapacity(config.numHiddenLayers)
++        for (index, layer) in layers.enumerated() {
++            let previous = previousKvs[index]
++            let (out, kvPair, positionOffset) = layer(
++                h,
++                mask: maskByType[layer.layerType],
++                cache: nil,
++                perLayerInput: perLayerInputs[index],
++                sharedKV: intermediates[previous].kv,
++                positionOffset: intermediates[previous].positionOffset
++            )
++            h = out
++            intermediates[index] = (kvPair, positionOffset)
++            states.append(out)
++        }
++        return states
++    }
+ }
+ 
+ // MARK: - Public Model
+@@ -964,7 +1024,7 @@ public class Gemma4TextModel: Module, LLMModel, KVCacheDimensionProvider {
+ 
+ extension Gemma4TextModel: LoRAModel {
+     public var loraLayers: [Module] {
+-        model.layers.map { $0.selfAttn }
++        model.layers
+     }
+ }
+ 

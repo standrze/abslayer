@@ -1,0 +1,23 @@
+.build*/
+.swiftpm/
+.abslayer/
+probe-report.txt
+.DS_Store
+runs/
+models/
+artifacts/
+
+# Independent active media task; outside the product source tree.
+intro-video/
+
+# Local recovery records and machine-specific deployment tooling.
+Documentation/Archive.json
+Documentation/Migration.md
+Documentation/ProjectReview.md
+Scripts/verify-archive.rb
+Scripts/sync_remote_cuda_bundle.sh
+
+# Local environment configuration.
+.env
+.env.*
+!.env.example

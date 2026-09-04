@@ -1,0 +1,30 @@
+diff --git a/Libraries/MLXLMCommon/Adapters/LoRA/LoRA+Layers.swift b/Libraries/MLXLMCommon/Adapters/LoRA/LoRA+Layers.swift
+--- a/Libraries/MLXLMCommon/Adapters/LoRA/LoRA+Layers.swift
++++ b/Libraries/MLXLMCommon/Adapters/LoRA/LoRA+Layers.swift
+@@ -107,10 +107,10 @@ public class LoRALinear: Linear, LoRALayer {
+     }
+ 
+     public override func callAsFunction(_ x: MLXArray) -> MLXArray {
+-        let y = super.callAsFunction(x.asType(weight.dtype))
+-        if !loraEnabled { return y }
++        let y = super.callAsFunction(x)
++        if !loraEnabled || scale == 0 { return y }
+         let z = matmul(matmul(dropout(x), self.loraA), self.loraB)
+-        return y + scale * z
++        return y + (scale * z).asType(y.dtype)
+     }
+ }
+ 
+@@ -208,9 +208,9 @@ public class QLoRALinear: QuantizedLinear, LoRALayer {
+     }
+ 
+     public override func callAsFunction(_ x: MLXArray) -> MLXArray {
+-        let y = super.callAsFunction(x.asType(scales.dtype))
+-        if !loraEnabled { return y }
++        let y = super.callAsFunction(x)
++        if !loraEnabled || scale == 0 { return y }
+         let z = matmul(matmul(dropout(x), self.loraA), self.loraB)
+-        return y + scale * z
++        return y + (scale * z).asType(y.dtype)
+     }
+ }

@@ -113,9 +113,9 @@ public struct ToolRequest: Sendable {
         request.timeoutSeconds = try integer("timeoutSeconds", 60)
         request.offset = try integer("offset", 0)
         request.limit = try integer("limit", 4096)
-        guard (1...120).contains(request.timeoutSeconds), (1...8192).contains(request.limit),
+        guard (1...3_600).contains(request.timeoutSeconds), (1...8192).contains(request.limit),
               ["stdout", "stderr"].contains(request.stream) else {
-            throw HarnessError("invalid_request", "Timeout must be 1–120 seconds, evidence limit 1–8192 bytes, stream stdout or stderr.")
+            throw HarnessError("invalid_request", "Timeout must be 1–3600 seconds, evidence limit 1–8192 bytes, stream stdout or stderr.")
         }
         return request
     }

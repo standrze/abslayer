@@ -21,15 +21,22 @@ public struct WorkerPlan: Sendable {
 public final class Harness: @unchecked Sendable {
     public let workspace: URL
     public let root: URL
-    private let plan: WorkerPlan
+    private let plans: [String: WorkerPlan]
     private let controller: FileBinding
     private let manager = FileManager.default
     static let outputLimit = 2 * 1_024 * 1_024
 
-    public init(workspace: URL, root: URL, plan: WorkerPlan) throws {
+    public convenience init(workspace: URL, root: URL, plan: WorkerPlan) throws {
+        try self.init(workspace: workspace, root: root, plans: ["workspace_preflight": plan])
+    }
+
+    public init(workspace: URL, root: URL, plans: [String: WorkerPlan]) throws {
+        guard !plans.isEmpty, plans.keys.allSatisfy({ !$0.isEmpty }) else {
+            throw HarnessError("invalid_configuration", "At least one named worker plan is required.")
+        }
         self.workspace = workspace.standardizedFileURL.resolvingSymlinksInPath()
         self.root = root.standardizedFileURL.resolvingSymlinksInPath()
-        self.plan = plan
+        self.plans = plans
         self.controller = try Persistence.binding(URL(fileURLWithPath: CommandLine.arguments[0]).standardizedFileURL)
         try Persistence.directory(self.root)
         try Persistence.directory(self.root.appendingPathComponent("jobs"))
@@ -58,8 +65,8 @@ public final class Harness: @unchecked Sendable {
         var response = ToolResponse()
         switch request.method {
         case "capabilities":
-            response.operations = ["workspace_preflight"]
-            response.message = "Workspace preflight only: no model loading, training, candidate acceptance, or GPU jobs. Methods: submit, status, cancel, evidence, recover."
+            response.operations = plans.keys.sorted()
+            response.message = "Named, configuration-bound operations only. Execution never implies candidate acceptance. Methods: submit, status, cancel, evidence, recover."
         case "submit":
             response.job = JobSummary(try submit(request), root: root)
         case "status":
@@ -103,11 +110,11 @@ public final class Harness: @unchecked Sendable {
     }
 
     private func submit(_ request: ToolRequest) throws -> Job {
-        guard request.operation == "workspace_preflight",
+        guard let plan = plans[request.operation],
               (1...128).contains(request.idempotencyKey.utf8.count),
               !request.idempotencyKey.contains(where: { $0.isNewline }),
-              (1...120).contains(request.timeoutSeconds) else {
-            throw HarnessError("invalid_request", "Submit workspace_preflight with an idempotencyKey (1–128 bytes) and timeoutSeconds (1–120).")
+              (1...3_600).contains(request.timeoutSeconds) else {
+            throw HarnessError("invalid_request", "Submit a listed operation with an idempotencyKey (1–128 bytes) and timeoutSeconds (1–3600).")
         }
         let inputs = try plan.inputs.map { try Persistence.binding($0) }
         let executable = try Persistence.binding(plan.executable)
@@ -209,10 +216,19 @@ public final class Harness: @unchecked Sendable {
             else if exit == 0 {
                 let data = try Data(contentsOf: directory(submitted.id).appendingPathComponent("stdout.log"))
                 try validateUniqueJSONKeys(data)
-                guard let manifest = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-                      let name = manifest["name"] as? String, !name.isEmpty,
-                      manifest["toolsVersion"] is [String: Any], manifest["targets"] is [Any] else {
-                    throw HarnessError("invalid_worker_result", "Preflight worker did not return a SwiftPM manifest object.")
+                guard let manifest = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                    throw HarnessError("invalid_worker_result", "Worker did not return one JSON object.")
+                }
+                if submitted.operation == "workspace_preflight" {
+                    guard let name = manifest["name"] as? String, !name.isEmpty,
+                          manifest["toolsVersion"] is [String: Any], manifest["targets"] is [Any] else {
+                        throw HarnessError("invalid_worker_result", "Preflight worker did not return a SwiftPM manifest object.")
+                    }
+                } else {
+                    guard manifest["operation"] as? String == submitted.operation,
+                          manifest["status"] as? String == "completed" else {
+                        throw HarnessError("invalid_worker_result", "Worker result does not identify the completed operation.")
+                    }
                 }
                 result.transition(.completed)
             } else { result.transition(.failed, reason: "Worker exited with status \(exit ?? -1).") }
@@ -229,13 +245,16 @@ public final class Harness: @unchecked Sendable {
     }
 
     private func validateBindings(_ job: Job) throws {
+        guard let plan = plans[job.operation] else {
+            throw HarnessError("request_changed", "The accepted operation is no longer configured.")
+        }
         let expectedDigest = Persistence.digest(try Persistence.encode(ExecutionIdentity(
             workspace: workspace.path, operation: job.operation, timeout: job.timeoutSeconds,
             inputs: job.inputs, executable: job.executable, controller: job.controller,
             arguments: job.arguments, environment: job.environment)))
         let checks = [
-            ("operation", job.operation == "workspace_preflight"),
-            ("timeout", (1...120).contains(job.timeoutSeconds)),
+            ("operation", plans[job.operation] != nil),
+            ("timeout", (1...3_600).contains(job.timeoutSeconds)),
             ("request digest", job.requestDigest == expectedDigest),
             ("arguments", job.arguments == plan.arguments),
             ("environment", job.environment == plan.environment),

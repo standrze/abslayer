@@ -32,15 +32,17 @@ structured commands, without an MCP server or a separate ABSlayer agent loop.
 | Component | Available now |
 | --- | --- |
 | Swift/MLX research engine | Activation capture, refusal-subspace analysis, residual and weight interventions, adapter training, retention measurements, and export workers |
-| Swift job controller | Durable workspace-preflight jobs, idempotent submission, status, cancellation, timeout handling, and interrupted-job reconciliation |
+| Swift job controller | Durable named jobs, idempotent submission, status, cancellation, timeout handling, and interrupted-job reconciliation |
 | Agent integration | Shared `abslayer-experiment` skill and a Ruby JSON bridge for Pool CLI and Codex CLI |
 | Evidence | Bounded terminal output, input and controller identity checks, and output hashes |
 
-**The new controller currently runs `workspace_preflight` only.** This executes a
-SwiftPM manifest check. Connecting model training, evaluation, export, GPU
-scheduling, and multi-candidate acceptance into that controller is still planned.
-The native research workers exist separately; they are not yet an automated
-end-to-end experiment pipeline.
+The controller always provides `workspace_preflight`. A server operator can also
+register the hash-bound `laguna_control_vector` and `laguna_vector_screen`
+workers through the environment documented in [Documentation/Harness.md](Documentation/Harness.md).
+The preflight executes a SwiftPM manifest check. The Laguna operations generate
+a reversible GGUF control vector and run a private base-versus-vector development
+screen. Permanent weight export, general GPU scheduling, and multi-candidate
+acceptance remain planned.
 
 Refusal reduction, answer completion, task correctness, and capability retention
 are separate outcomes. A successful workspace check is not a model evaluation.

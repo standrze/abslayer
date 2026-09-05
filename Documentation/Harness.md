@@ -7,7 +7,7 @@ ABSlayer model loop is involved.
 
 **Available now**
 
-The bridge implements `workspace_preflight`: evaluate this workspace's complete
+The bridge always implements `workspace_preflight`: evaluate this workspace's complete
 SwiftPM manifest using `swift package dump-package`. It does not resolve model
 dependencies, load model weights, or read datasets. Jobs are persisted before
 acknowledgement, run in a detached local process, and can be inspected from a
@@ -119,8 +119,18 @@ Tests/HarnessIntegrationTests.rb           detached-process and real preflight c
 
 `ABSLAYER_STATE_DIR` can select an isolated state directory for tests. Both
 clients must use the same state location to share jobs. `ABSLAYER_SWIFT` can
-select the installed Swift executable. These are local support settings, not
-parameters a JSON request can turn into arbitrary worker commands.
+select an absolute Swift executable. On a Laguna host, setting the complete
+`ABSLAYER_LAGUNA_WORKER`, `ABSLAYER_LAGUNA_MODEL`, `ABSLAYER_LAGUNA_DATASET`,
+`ABSLAYER_LAGUNA_GENERATOR`, and `ABSLAYER_LAGUNA_OUTPUT` group registers
+`laguna_control_vector`. The corresponding screen group is
+`ABSLAYER_LAGUNA_SCREEN_WORKER`, `ABSLAYER_LAGUNA_SERVER`,
+`ABSLAYER_LAGUNA_MODEL`, `ABSLAYER_LAGUNA_VECTOR`,
+`ABSLAYER_LAGUNA_SCREEN_DATASET`, and `ABSLAYER_LAGUNA_SCREEN_OUTPUT`;
+`ABSLAYER_LAGUNA_SCREEN_SCALE` defaults to `-0.5`. These values are host
+configuration, never JSON request fields. Every file is identity-bound when a
+job is submitted, and successful execution leaves acceptance as `not_evaluated`.
+These are local support settings, not parameters a JSON request can turn into
+arbitrary worker commands.
 
 **Execution and recovery guarantees**
 

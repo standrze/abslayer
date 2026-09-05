@@ -45,6 +45,31 @@ private struct Fixture: Sendable {
     #expect(try ToolRequest.decode(Data("{\"method\":\"status\"}".utf8)).method == "status")
 }
 
+@Test func namedConfiguredOperationIsDiscoverableAndCompletes() throws {
+    let directory = FileManager.default.temporaryDirectory
+        .appendingPathComponent(UUID().uuidString).resolvingSymlinksInPath()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    let input = directory.appendingPathComponent("input")
+    try Data("bound".utf8).write(to: input)
+    let plan = WorkerPlan(
+        executable: URL(fileURLWithPath: "/bin/sh"),
+        arguments: ["-c", "printf '%s' '{\"operation\":\"fixture_operation\",\"status\":\"completed\"}'"],
+        environment: ["PATH": "/usr/bin:/bin"], inputs: [input])
+    let harness = try Harness(
+        workspace: directory, root: directory.appendingPathComponent("state"),
+        plans: ["fixture_operation": plan])
+    #expect(try harness.handle(ToolRequest(method: "capabilities")).operations == ["fixture_operation"])
+    var request = ToolRequest(method: "submit")
+    request.operation = "fixture_operation"
+    request.idempotencyKey = "named-operation"
+    request.timeoutSeconds = 300
+    let job = try #require(harness.handle(request).job)
+    try harness.drain()
+    #expect(try harness.job(job.id).state == .completed)
+    #expect(try harness.job(job.id).acceptance == "not_evaluated")
+}
+
 @Test func duplicateSubmissionIsStableAndDriftIsRejected() throws {
     let fixture = try Fixture(); defer { fixture.remove() }
     let first = try fixture.submit()

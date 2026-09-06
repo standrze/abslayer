@@ -1,12 +1,15 @@
-# Authorized cyber dataset audit — September 5, 2026
+# Authorized cyber dataset audit — September 6, 2026
 
 ABSlayer's current cyber candidate bank is
 `artifacts/datasets/authorized-cyber-combined-v3/`. It is a deterministic,
 development-only PromptFile-v2 corpus for finding false refusals on explicitly
 authorized security work. The data has passed structural and provenance checks.
-It has not passed target-model screening, response-bound semantic review, or an
-independent capability benchmark. It is not training-ready, sealed held-out
-evidence, or evidence that Laguna XS 2.1 has been successfully abliterated.
+A deterministic 816-response subset has now passed a target-model development
+screen and complete response-bound semantic review. Those results found no
+false-refusal direction to remove and did not produce a vector. The data remains
+development-only: it is not training-ready, sealed held-out evidence, an
+independent capability benchmark, or evidence that Laguna XS 2.1 has been
+successfully abliterated.
 
 ## Backup corpus audit
 
@@ -229,8 +232,49 @@ gates:
    advance and the result is reproducible from bound artifacts.
 
 The earlier SSRF-only vector is rejected, and its independent result is recorded
-in `Documentation/LagunaIndependentVerification.md`. Combined v3 has not yet
-produced an accepted vector.
+in `Documentation/LagunaIndependentVerification.md`.
+
+## September 6 Laguna development screens
+
+Both target screens ran on the Linux experiment host through the durable Swift
+controller and the registered `laguna_authorized_screen` Ruby worker. They used
+Laguna XS 2.1 Q4_K_M with model SHA-256
+`1ac7079101fca5a6df8c5a7523a3c30ea7d1c0e4b1258090e7d6d4039287f6cb`
+and the bound llama.cpp server SHA-256
+`d8a0b7a62ef2f108560f3db5827fd4500ca576e268d788f06e98f73d5a356b14`.
+Every request received HTTP 200 and a visible answer. Regex refusal signals were
+zero and were not used as semantic judgments.
+
+| Development screen | Controller job | Responses | Normal stop | Length-limited | False refusal | Substantive | Partial/incorrect |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Combined v3 workflows, 68 categories by 6 request types by 2 cases | `02fec4ab-2517-4127-b123-9ac915cab03a` | 816 | 689 | 127 | 0 | 48 | 768 |
+| Operator artifacts, 68 categories by 2 cases | `4ea92e43-972b-4206-b00a-b7c476b38f05` | 136 | 126 | 10 | 0 | 2 | 134 |
+
+The combined review made an explicit equivalence judgment for all 408 groups:
+240 were `same_task_authorized` and 168 were `not_same_task`. The operator
+review covered all 68 exact-task groups, all of which were
+`same_task_authorized`, and a separate full-response audit confirmed the final
+2/134 substantive-versus-partial split. These are strict semantic artifact
+reviews, not executed fixture-oracle scores.
+
+The reviewed-vector gate requires at least two eligible pairs. Each pair needs
+one completed semantic `false_refusal` response and one completed
+`substantive_compliance` response for the same authorized operation. Neither
+screen contains a false-refusal side. No eligible selection could be formed, so
+no reviewed-vector job ran and no vector was generated. No model weights were
+changed. Acceptance remains `not_evaluated`, and candidate-versus-base capability
+retention is inapplicable because no candidate exists.
+
+The private combined decision receipt binds job, controller, worker, model,
+server, dataset, manifest, raw response, and review identities. Its SHA-256 is
+`987e7408e9e0fba8845ffc2a87f132499cde416a0fa1485109f5de1e0b09614c`.
+The corresponding operator receipt binds the separate independent full-response
+audit and has SHA-256
+`3ad174fb0ae9a46c27c64d675a21b6961219237883ad4774d00db39f15321c96`.
+The practical finding is that this Laguna checkpoint is willing across the
+measured authorized cyber scope but usually fails the requested artifact
+contract. Further work should target correctness and fixture-backed execution,
+not a refusal-removal vector unsupported by the evidence.
 
 ## Required benchmark reporting
 

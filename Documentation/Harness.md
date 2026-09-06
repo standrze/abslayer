@@ -277,8 +277,10 @@ metrics without loading model weights.
 
 The shared Pool/Codex skill layout and frontmatter are validated. The controller
 and Laguna runtime have been exercised on the Linux experiment host. The corrected
-reviewed-vector gate is contract-tested and awaits an eligible real pair. The full
-Swift/MLX engine build and a final accepted model remain separate.
+reviewed-vector gate is contract-tested; two completed development screens found
+no eligible false-refusal side, so no reviewed-vector job was submitted and no
+vector was generated. The full Swift/MLX engine build and a final accepted model
+remain separate.
 
 Multi-candidate experiments, the native model-preflight adapter, explicit GPU
 allocation across state directories, permanent-weight export, calibrated

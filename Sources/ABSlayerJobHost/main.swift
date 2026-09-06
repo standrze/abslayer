@@ -22,22 +22,26 @@ enum JobHost {
                                                     attributes: [.posixPermissions: 0o700])
             let state = requestedState.resolvingSymlinksInPath()
             var plans = ["workspace_preflight": Harness.workspacePreflight(
-                workspace: workspace, root: state, swift: URL(fileURLWithPath: args[3]))]
+                workspace: workspace, root: state,
+                swift: URL(fileURLWithPath: args[3]).resolvingSymlinksInPath())]
             let environment = ProcessInfo.processInfo.environment
-            func configuredURL(_ path: String) -> URL {
+            func configuredInputURL(_ path: String) -> URL {
+                URL(fileURLWithPath: path).standardizedFileURL.resolvingSymlinksInPath()
+            }
+            func configuredOutputURL(_ path: String) -> URL {
                 URL(fileURLWithPath: path).standardizedFileURL
             }
             let ruby = URL(fileURLWithPath: environment["ABSLAYER_RUBY"] ?? "/usr/bin/ruby")
-                .standardizedFileURL
+                .standardizedFileURL.resolvingSymlinksInPath()
             if let worker = environment["ABSLAYER_LAGUNA_VERIFY_WORKER"],
                let server = environment["ABSLAYER_LAGUNA_SERVER"],
                let model = environment["ABSLAYER_LAGUNA_MODEL"],
                let vector = environment["ABSLAYER_LAGUNA_VECTOR"],
                let fixture = environment["ABSLAYER_LAGUNA_VERIFY_FIXTURE"],
                let output = environment["ABSLAYER_LAGUNA_VERIFY_OUTPUT"] {
-                let workerURL = configuredURL(worker), serverURL = configuredURL(server)
-                let modelURL = configuredURL(model), vectorURL = configuredURL(vector)
-                let fixtureURL = configuredURL(fixture), outputURL = configuredURL(output)
+                let workerURL = configuredInputURL(worker), serverURL = configuredInputURL(server)
+                let modelURL = configuredInputURL(model), vectorURL = configuredInputURL(vector)
+                let fixtureURL = configuredInputURL(fixture), outputURL = configuredOutputURL(output)
                 let scale = environment["ABSLAYER_LAGUNA_VERIFY_SCALE"] ?? "-0.25"
                 plans["laguna_independent_verify"] = WorkerPlan(
                     executable: ruby,
@@ -54,9 +58,9 @@ enum JobHost {
                let dataset = environment["ABSLAYER_LAGUNA_AUTHORIZED_DATASET"],
                let manifest = environment["ABSLAYER_LAGUNA_AUTHORIZED_MANIFEST"],
                let output = environment["ABSLAYER_LAGUNA_AUTHORIZED_SCREEN_OUTPUT"] {
-                let workerURL = configuredURL(worker), serverURL = configuredURL(server)
-                let modelURL = configuredURL(model), datasetURL = configuredURL(dataset)
-                let manifestURL = configuredURL(manifest), outputURL = configuredURL(output)
+                let workerURL = configuredInputURL(worker), serverURL = configuredInputURL(server)
+                let modelURL = configuredInputURL(model), datasetURL = configuredInputURL(dataset)
+                let manifestURL = configuredInputURL(manifest), outputURL = configuredOutputURL(output)
                 let mode = environment["ABSLAYER_LAGUNA_AUTHORIZED_SCREEN_MODE"] ?? "balanced"
                 plans["laguna_authorized_screen"] = WorkerPlan(
                     executable: ruby,
@@ -76,11 +80,11 @@ enum JobHost {
                let server = environment["ABSLAYER_LAGUNA_SERVER"],
                let generator = environment["ABSLAYER_LAGUNA_GENERATOR"],
                let output = environment["ABSLAYER_LAGUNA_REVIEWED_VECTOR_OUTPUT"] {
-                let workerURL = configuredURL(worker), selectionURL = configuredURL(selection)
-                let screenURL = configuredURL(screen), datasetURL = configuredURL(dataset)
-                let manifestURL = configuredURL(manifest), modelURL = configuredURL(model)
-                let serverURL = configuredURL(server), generatorURL = configuredURL(generator)
-                let outputURL = configuredURL(output)
+                let workerURL = configuredInputURL(worker), selectionURL = configuredInputURL(selection)
+                let screenURL = configuredInputURL(screen), datasetURL = configuredInputURL(dataset)
+                let manifestURL = configuredInputURL(manifest), modelURL = configuredInputURL(model)
+                let serverURL = configuredInputURL(server), generatorURL = configuredInputURL(generator)
+                let outputURL = configuredOutputURL(output)
                 plans["laguna_reviewed_vector"] = WorkerPlan(
                     executable: ruby,
                     arguments: [workerURL.path, selectionURL.path, screenURL.path, datasetURL.path,

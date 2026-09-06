@@ -45,13 +45,30 @@ enum JobHost {
                let output = environment["ABSLAYER_LAGUNA_SCREEN_OUTPUT"] {
                 let workerURL = URL(fileURLWithPath: worker).standardizedFileURL
                 let scale = environment["ABSLAYER_LAGUNA_SCREEN_SCALE"] ?? "-0.5"
+                let offset = environment["ABSLAYER_LAGUNA_SCREEN_OFFSET"] ?? "0"
                 plans["laguna_vector_screen"] = WorkerPlan(
                     executable: URL(fileURLWithPath: "/usr/bin/env"),
-                    arguments: ["ruby", workerURL.path, server, model, vector, dataset, output, scale],
+                    arguments: ["ruby", workerURL.path, server, model, vector, dataset, output, scale, offset],
                     environment: ["PATH": "/usr/bin:/bin"],
                     inputs: [workerURL, URL(fileURLWithPath: server),
                              URL(fileURLWithPath: model), URL(fileURLWithPath: vector),
                              URL(fileURLWithPath: dataset)])
+            }
+            if let worker = environment["ABSLAYER_LAGUNA_VERIFY_WORKER"],
+               let server = environment["ABSLAYER_LAGUNA_SERVER"],
+               let model = environment["ABSLAYER_LAGUNA_MODEL"],
+               let vector = environment["ABSLAYER_LAGUNA_VECTOR"],
+               let fixture = environment["ABSLAYER_LAGUNA_VERIFY_FIXTURE"],
+               let output = environment["ABSLAYER_LAGUNA_VERIFY_OUTPUT"] {
+                let workerURL = URL(fileURLWithPath: worker).standardizedFileURL
+                let scale = environment["ABSLAYER_LAGUNA_VERIFY_SCALE"] ?? "-0.25"
+                plans["laguna_independent_verify"] = WorkerPlan(
+                    executable: URL(fileURLWithPath: "/usr/bin/env"),
+                    arguments: ["ruby", workerURL.path, server, model, vector, fixture, output, scale],
+                    environment: ["PATH": "/usr/bin:/bin"],
+                    inputs: [workerURL, URL(fileURLWithPath: server),
+                             URL(fileURLWithPath: model), URL(fileURLWithPath: vector),
+                             URL(fileURLWithPath: fixture)])
             }
             let harness = try Harness(workspace: workspace, root: state, plans: plans)
             if args[0] == "drain" { try harness.drain(); return }

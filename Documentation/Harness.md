@@ -129,6 +129,11 @@ select an absolute Swift executable. On a Laguna host, setting the complete
 `ABSLAYER_LAGUNA_SCREEN_SCALE` defaults to `-0.5`. These values are host
 configuration, never JSON request fields. Every file is identity-bound when a
 job is submitted, and successful execution leaves acceptance as `not_evaluated`.
+An independent private verification can be registered with
+`ABSLAYER_LAGUNA_VERIFY_WORKER`, `ABSLAYER_LAGUNA_SERVER`,
+`ABSLAYER_LAGUNA_MODEL`, `ABSLAYER_LAGUNA_VECTOR`,
+`ABSLAYER_LAGUNA_VERIFY_FIXTURE`, and `ABSLAYER_LAGUNA_VERIFY_OUTPUT`;
+`ABSLAYER_LAGUNA_VERIFY_SCALE` defaults to `-0.25`.
 These are local support settings, not parameters a JSON request can turn into
 arbitrary worker commands.
 

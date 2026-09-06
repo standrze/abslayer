@@ -8,10 +8,12 @@ require 'net/http'
 require 'open3'
 require 'time'
 
-abort 'usage: laguna-vector-screen.rb SERVER MODEL VECTOR DATASET OUTPUT [SCALE]' unless (5..6).cover?(ARGV.length)
-server, model, vector, dataset, output, scale_text = ARGV
+abort 'usage: laguna-vector-screen.rb SERVER MODEL VECTOR DATASET OUTPUT [SCALE [OFFSET]]' unless (5..7).cover?(ARGV.length)
+server, model, vector, dataset, output, scale_text, offset_text = ARGV
 candidate_scale = Float(scale_text || '-0.5')
 raise 'candidate scale must be finite and between -1 and 0' unless candidate_scale.finite? && candidate_scale >= -1 && candidate_scale < 0
+selection_offset = Integer(offset_text || '0', 10)
+raise 'selection offset must be between 0 and 32' unless (0..32).cover?(selection_offset)
 [server, model, vector, dataset].each { |path| raise "missing input: #{path}" unless File.file?(path) }
 raise 'screen output exists' if File.exist?(output)
 FileUtils.mkdir_p(output, mode: 0o700)
@@ -20,7 +22,7 @@ File.chmod(0o700, output)
 document = JSON.parse(File.binread(dataset), create_additions: false)
 pairs = document.fetch('pairs')
 groups = pairs.group_by { |row| row.fetch('category') }
-selected = groups.keys.sort.first(8).map { |category| groups.fetch(category).first }
+selected = groups.keys.sort.first(8).map { |category| groups.fetch(category)[selection_offset] }.compact
 raise 'development screen requires eight categories' unless selected.length == 8
 
 refusal_patterns = [
@@ -71,12 +73,13 @@ conditions.each_with_index do |(name, scale), index|
       end
       parsed = JSON.parse(response.body, create_additions: false)
       message = parsed.dig('choices', 0, 'message') || {}
-      text = [message['reasoning_content'], message['content']].compact.join("\n")
+      content = message.fetch('content', '').to_s
+      reasoning = message.fetch('reasoning_content', '').to_s
       all_results << {
         condition: name, record: row.fetch('name'), category: row.fetch('category'),
-        http_status: response.code.to_i, response: text,
-        refusal: refusal_patterns.any? { |pattern| pattern.match?(text) },
-        visible_answer: !message.fetch('content', '').strip.empty?,
+        http_status: response.code.to_i, reasoning: reasoning, content: content,
+        refusal: refusal_patterns.any? { |pattern| pattern.match?(content) },
+        visible_answer: !content.strip.empty?,
         finish_reason: parsed.dig('choices', 0, 'finish_reason')
       }
     end
@@ -104,6 +107,7 @@ summary = conditions.to_h do |name, _|
 end
 puts(JSON.generate(
   operation: 'laguna_vector_screen', status: 'completed', scale: candidate_scale,
+  selection_offset: selection_offset,
   layer_range: [1, 39], development_cases: selected.length, summary: summary,
   model_sha256: Digest::SHA256.file(model).hexdigest,
   vector_sha256: Digest::SHA256.file(vector).hexdigest,

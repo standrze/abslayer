@@ -32,8 +32,10 @@ final class SpawnedWorker {
         posix_spawnattr_setpgroup(&attributes, 0)
         // All production commands carry explicit --package-path; process cwd
         // is inherited from the host, which the bridge starts in the workspace.
-        let argv = ([job.executable.path] + job.arguments).map { strdup($0) }
-        let envp = job.environment.sorted { $0.key < $1.key }.map { strdup("\($0.key)=\($0.value)") }
+        let argumentZero = job.environment["_ABSLAYER_EXECUTABLE_ARGV0"] ?? job.executable.path
+        let argv = ([argumentZero] + job.arguments).map { strdup($0) }
+        let envp = job.environment.filter { $0.key != "_ABSLAYER_EXECUTABLE_ARGV0" }
+            .sorted { $0.key < $1.key }.map { strdup("\($0.key)=\($0.value)") }
         defer { argv.forEach { free($0) }; envp.forEach { free($0) } }
         var args = argv + [nil]; var env = envp + [nil]; var child: pid_t = 0
         let status = posix_spawn(&child, job.executable.path, &actions, &attributes, &args, &env)

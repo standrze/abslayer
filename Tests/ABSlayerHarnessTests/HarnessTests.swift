@@ -83,6 +83,25 @@ private struct LegacyIdentity: Encodable {
     #expect(try harness.job(job.id).acceptance == "not_evaluated")
 }
 
+@Test func configuredExecutableArgumentZeroIsAppliedButNotInherited() throws {
+    let directory = FileManager.default.temporaryDirectory
+        .appendingPathComponent(UUID().uuidString).resolvingSymlinksInPath()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    let script = "test \"$0\" = fixture-shell; test -z \"$_ABSLAYER_EXECUTABLE_ARGV0\"; " +
+        "printf '%s' '{\"operation\":\"fixture_operation\",\"status\":\"completed\"}'"
+    let plan = WorkerPlan(executable: fixtureShell, arguments: ["-c", script],
+                          environment: ["PATH": "/usr/bin:/bin",
+                                        "_ABSLAYER_EXECUTABLE_ARGV0": "fixture-shell"], inputs: [])
+    let harness = try Harness(workspace: directory, root: directory.appendingPathComponent("state"),
+                              plans: ["fixture_operation": plan])
+    var request = ToolRequest(method: "submit")
+    request.operation = "fixture_operation"; request.idempotencyKey = "custom-argv-zero"
+    let job = try #require(harness.handle(request).job)
+    try harness.drain()
+    #expect(try harness.job(job.id).state == .completed)
+}
+
 @Test func declaredArtifactIsBoundAndTamperingBreaksStatus() throws {
     let directory = FileManager.default.temporaryDirectory
         .appendingPathComponent(UUID().uuidString).resolvingSymlinksInPath()

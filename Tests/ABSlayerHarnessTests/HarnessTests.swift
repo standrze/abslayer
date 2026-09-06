@@ -2,6 +2,8 @@ import Foundation
 import Testing
 @testable import ABSlayerHarness
 
+private let fixtureShell = URL(fileURLWithPath: "/bin/sh").resolvingSymlinksInPath()
+
 private struct Fixture: Sendable {
     let directory: URL
     let input: URL
@@ -12,7 +14,7 @@ private struct Fixture: Sendable {
         input = directory.appendingPathComponent("input")
         try Data("original".utf8).write(to: input)
         harness = try Harness(workspace: directory, root: directory.appendingPathComponent("state"),
-                              plan: WorkerPlan(executable: URL(fileURLWithPath: "/bin/sh"),
+                              plan: WorkerPlan(executable: fixtureShell,
                                                arguments: ["-c", script],
                                                environment: ["PATH": "/usr/bin:/bin"], inputs: [input]))
     }
@@ -64,7 +66,7 @@ private struct LegacyIdentity: Encodable {
     let input = directory.appendingPathComponent("input")
     try Data("bound".utf8).write(to: input)
     let plan = WorkerPlan(
-        executable: URL(fileURLWithPath: "/bin/sh"),
+        executable: fixtureShell,
         arguments: ["-c", "printf '%s' '{\"operation\":\"fixture_operation\",\"status\":\"completed\"}'"],
         environment: ["PATH": "/usr/bin:/bin"], inputs: [input])
     let harness = try Harness(
@@ -98,7 +100,7 @@ private struct LegacyIdentity: Encodable {
     let manifestText = String(decoding: try JSONSerialization.data(withJSONObject: manifest), as: UTF8.self)
     func shellQuote(_ value: String) -> String { "'" + value.replacingOccurrences(of: "'", with: "'\"'\"'") + "'" }
     let script = "printf '%s' 'vector-bytes' > \(shellQuote(artifact.path)); printf '%s' \(shellQuote(manifestText))"
-    let plan = WorkerPlan(executable: URL(fileURLWithPath: "/bin/sh"), arguments: ["-c", script],
+    let plan = WorkerPlan(executable: fixtureShell, arguments: ["-c", script],
                           environment: ["PATH": "/usr/bin:/bin"], inputs: [input],
                           artifacts: ["vector": artifact])
     let harness = try Harness(workspace: directory, root: directory.appendingPathComponent("state"),
@@ -139,7 +141,7 @@ private struct LegacyIdentity: Encodable {
     let manifest = "{\"operation\":\"fixture_operation\",\"status\":\"completed\",\"vector\":{\"path\":\"\(artifact.path)\",\"sha256\":\"\(String(repeating: "0", count: 64))\",\"bytes\":12}}"
     let escaped = manifest.replacingOccurrences(of: "'", with: "'\"'\"'")
     let path = artifact.path.replacingOccurrences(of: "'", with: "'\"'\"'")
-    let plan = WorkerPlan(executable: URL(fileURLWithPath: "/bin/sh"),
+    let plan = WorkerPlan(executable: fixtureShell,
                           arguments: ["-c", "printf '%s' 'vector-bytes' > '\(path)'; printf '%s' '\(escaped)'"],
                           environment: ["PATH": "/usr/bin:/bin"], inputs: [], artifacts: ["vector": artifact])
     let harness = try Harness(workspace: directory, root: directory.appendingPathComponent("state"),
@@ -188,7 +190,7 @@ private struct LegacyIdentity: Encodable {
         let manifest = "{\"operation\":\"fixture_operation\",\"status\":\"completed\",\"vector\":{\"path\":\"\(artifact.path)\",\"sha256\":\"21b7880109588a8c2561a6cdd2c94d4b42e17538055ef1c80f10be711b38edb1\",\"bytes\":\(claimedBytes)}}"
         let escaped = manifest.replacingOccurrences(of: "'", with: "'\"'\"'")
         let script = "cd '\(directory.path)'; \(artifactCommand); printf '%s' '\(escaped)'"
-        let plan = WorkerPlan(executable: URL(fileURLWithPath: "/bin/sh"), arguments: ["-c", script],
+        let plan = WorkerPlan(executable: fixtureShell, arguments: ["-c", script],
                               environment: ["PATH": "/usr/bin:/bin"], inputs: [], artifacts: ["vector": artifact])
         let harness = try Harness(workspace: directory, root: directory.appendingPathComponent("state"),
                                   plans: ["fixture_operation": plan])
@@ -391,7 +393,7 @@ private struct LegacyIdentity: Encodable {
     let fixture = try Fixture(); defer { fixture.remove() }
     let first = try fixture.submit()
     let root = fixture.directory.appendingPathComponent("state")
-    let plan = WorkerPlan(executable: URL(fileURLWithPath: "/bin/sh"), arguments: [], environment: [:], inputs: [])
+    let plan = WorkerPlan(executable: fixtureShell, arguments: [], environment: [:], inputs: [])
     #expect(throws: (any Error).self) { try Harness(workspace: fixture.directory.appendingPathComponent("elsewhere"), root: root, plan: plan) }
     #expect(try fixture.harness.job(first.id).state == .queued)
     try Data("corrupt".utf8).write(to: root.appendingPathComponent("state.json"))

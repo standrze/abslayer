@@ -61,7 +61,8 @@ public final class Harness: @unchecked Sendable {
         environment["CLANG_MODULE_CACHE_PATH"] = root.appendingPathComponent("module-cache").path
         environment["SWIFT_MODULECACHE_PATH"] = root.appendingPathComponent("module-cache").path
         if swift.lastPathComponent == "swift-driver" {
-            environment["_ABSLAYER_EXECUTABLE_ARGV0"] = "swift"
+            environment["_ABSLAYER_EXECUTABLE_ARGV0"] = swift.deletingLastPathComponent()
+                .appendingPathComponent("swift").path
         }
         return WorkerPlan(
             executable: swift,

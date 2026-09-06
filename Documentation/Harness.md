@@ -118,6 +118,7 @@ Sources/ABSlayerJobHost/main.swift          internal request/drain entrypoint
 Tests/ABSlayerHarnessTests/                synthetic Swift controller tests
 Tests/HarnessIntegrationTests.rb           detached-process and real preflight checks
 Tests/LagunaWorkerTests.rb                  fake-server screening/vector contract checks
+Tests/LagunaIndependentVerifyTests.rb       fake-server development cohort checks
 .abslayer/state/                          generated private state and job artifacts
 ```
 
@@ -136,7 +137,7 @@ ABSLAYER_LAGUNA_MODEL
 ABSLAYER_LAGUNA_AUTHORIZED_DATASET
 ABSLAYER_LAGUNA_AUTHORIZED_MANIFEST
 ABSLAYER_LAGUNA_AUTHORIZED_SCREEN_OUTPUT
-ABSLAYER_LAGUNA_AUTHORIZED_SCREEN_MODE   # balanced (default) or ssrf
+ABSLAYER_LAGUNA_AUTHORIZED_SCREEN_MODE   # balanced (default), ssrf, pairable, or full
 ```
 
 The screen validates train-split, same-operation synthetic provenance, selects
@@ -145,7 +146,15 @@ hidden reasoning and finish reason. It uses an authenticated per-run localhost
 server and checkpoints each response. Saved rows are revalidated against their
 raw response bodies and dataset identity before reuse. The final private response
 file is a declared controller-bound artifact. Regex matches only identify records
-for semantic review.
+for semantic review. `balanced` retains the two-record-per-category development
+screen, while `ssrf` retains all records from the three SSRF-related categories.
+For the legacy 40-category source dataset, `pairable` requires six request types
+and seven records in every category/request-type cell, then selects the first two
+stable record IDs per cell (480 total). `full` selects all seven records per cell
+(1,680 total). A newer manifest may declare its exact category list, request-type
+list, and rows per cell in `coverage_requirements`; the same pairable/full rules
+then apply to that declared matrix. These broad modes fail closed on missing,
+extra, or uneven cells so a partial dataset cannot be reported as full coverage.
 
 The complete following group registers `laguna_reviewed_vector`:
 
@@ -166,9 +175,20 @@ rubric and per-pair notes. Each side is resolved back to a completed authorized
 screen response and dataset control. Pairs must have reviewed false-refusal/
 substantive-compliance outcomes, the same category and request type, distinct
 unreused prompts, and rendered byte lengths within 0.8–1.25. The worker re-renders
-the exact Laguna template, checks it against the screen hash, preserves prompt
-escape bytes, validates the GGUF header and a target-runtime load, and publishes
-a declared controller-bound `control-vector.gguf`. The withdrawn
+the exact Laguna template and checks it against the screen hash. It then calls the
+authenticated llama.cpp `/tokenize` endpoint for every rendered side with special
+token insertion and special-token parsing enabled. This matches Laguna's enabled
+GGUF add-BOS setting and the rendered-prompt tokenization in the inspected
+generator implementation; the chat template itself does not emit BOS. The worker
+requires nonempty integer token IDs and one shared final assistant-generation
+boundary token, and applies the same 0.8–1.25 balance range to token counts. The result
+records those counts and the boundary token. Its explicit algorithm provenance
+describes final-rendered-token capture, false-refusal minus compliance directions,
+per-layer arithmetic mean followed by L2 normalization, and subtraction at the
+runtime `-0.25` scale. It binds the generator executable by SHA-256 without
+claiming an unavailable source-to-binary attestation. The worker preserves prompt
+escape bytes, validates the GGUF header and a target-runtime load, and publishes a
+declared controller-bound `control-vector.gguf`. The withdrawn
 `laguna_control_vector` and `laguna_vector_screen` operations are unavailable.
 
 These values are host configuration, never JSON request fields. Every input is
@@ -179,6 +199,20 @@ An independent private verification can be registered with
 `ABSLAYER_LAGUNA_MODEL`, `ABSLAYER_LAGUNA_VECTOR`,
 `ABSLAYER_LAGUNA_VERIFY_FIXTURE`, and `ABSLAYER_LAGUNA_VERIFY_OUTPUT`;
 `ABSLAYER_LAGUNA_VERIFY_SCALE` defaults to `-0.25`.
+The preferred schema-2 fixture must identify itself as development and
+not-held-out, declare exact cohort counts, and classify every cohort exactly once
+as authorized, benign, or protected-boundary. Record IDs and prompts must be
+nonempty, IDs must be unique, and every record must have nonempty marker groups.
+The worker refuses incomplete or overlapping coverage before inference. The
+legacy fixed 8-authorized-SSRF/4-benign/4-sensitive schema-1 layout remains
+readable as development evidence.
+
+Results report refusal, visibility, stop, and marker counts per condition and
+cohort. Authorized refusal-to-answer flips, benign marker retention, and
+protected-boundary refusal retention are separate transition counts. Server,
+model, vector, and fixture hashes bind the comparison. The artifact remains a
+private development comparison with `acceptance: not_evaluated`; it is not a
+sealed or held-out evaluation.
 These are local support settings, not parameters a JSON request can turn into
 arbitrary worker commands.
 
@@ -228,16 +262,18 @@ Run the checks with:
 ruby Scripts/build-harness.rb test
 ruby Tests/HarnessIntegrationTests.rb
 ruby Tests/LagunaWorkerTests.rb
+ruby Tests/LagunaIndependentVerifyTests.rb
 ```
 
 The checks cover request validation, idempotency conflicts, input drift,
 cancellation, timeout, competing supervisors, malformed/oversized output,
 artifact tampering, corrupt state, and real process-level crash recovery. The
 integration suite also executes the real SwiftPM preflight through the bridge
-and verifies that dependency pins remain unchanged. The Laguna worker suite uses
-a fake authenticated model server and generator to verify authorized-only
-selection, exact template bytes, checkpoint recovery, reviewed provenance, and
-declared vector binding without loading model weights.
+and verifies that dependency pins remain unchanged. The Laguna worker suites use
+fake authenticated model servers and a fake generator to verify authorized-only
+selection, exact template bytes, checkpoint recovery, reviewed provenance,
+declared vector binding, development cohort validation, and separated transition
+metrics without loading model weights.
 
 The shared Pool/Codex skill layout and frontmatter are validated. The controller
 and Laguna runtime have been exercised on the Linux experiment host. The corrected

@@ -40,14 +40,20 @@ Run `laguna_reviewed_vector` only when its configured schema-2 selection binds
 the screen, dataset, manifest, model, and server hashes. Every pair must contain
 a completed authorized false refusal and a completed substantive authorized
 answer, have reviewed same-task/category/request-type equivalence, use distinct
-responses, and stay within the rendered-length balance gate. The worker renders
-both sides with Laguna's live chat template and publishes a controller-bound
+responses, and stay within both rendered-byte and rendered-token length balance
+gates. The worker renders both sides with Laguna's live chat template, verifies
+the exact screen-bound template hashes, and requires their tokenizations to share
+the final assistant-generation boundary token before publishing a controller-bound
 reversible GGUF vector. Generation success is not behavioral acceptance.
 
 `laguna_independent_verify` is a private development comparison for a configured
-candidate. Its marker/refusal counts are triage signals; semantic correctness,
-completion, protected-boundary retention, and final held-out evaluation remain
-separate required judgments.
+candidate. Prefer a schema-2 fixture that declares exact counts and disjoint,
+exhaustive authorized, benign, and protected-boundary cohort lists and identifies
+itself as development/not-held-out. Read per-cohort refusal, visibility, stop, and
+marker counts alongside the separately reported authorized flips, benign marker
+retention, and protected-boundary refusal retention. These are triage signals;
+semantic correctness and a separately governed held-out evaluation remain
+required. The worker always leaves acceptance unevaluated.
 
 Pass subsequent JSON requests to the same bridge via stdin or one quoted argument:
 

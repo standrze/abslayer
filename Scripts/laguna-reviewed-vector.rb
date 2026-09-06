@@ -89,6 +89,23 @@ def render_prompt(port, token, prompt)
   rendered
 end
 
+def tokenize_prompt(port, token, prompt)
+  request = Net::HTTP::Post.new('/tokenize', 'Content-Type' => 'application/json')
+  request.body = JSON.generate(
+    content: prompt, add_special: true, parse_special: true, with_pieces: false
+  )
+  response = authenticated_request(port, token, request, read_timeout: 30)
+  raise "tokenize request returned HTTP #{response.code}" unless response.code == '200'
+  payload = JSON.parse(response.body, create_additions: false)
+  tokens = payload['tokens']
+  raise 'tokenize response did not contain nonempty integer token IDs' unless
+    tokens.is_a?(Array) && !tokens.empty? &&
+    tokens.all? { |token_id| token_id.is_a?(Integer) && token_id >= 0 }
+  tokens
+rescue JSON::ParserError
+  raise 'tokenize response was not valid JSON'
+end
+
 def escape_line(text)
   text.gsub(/\\/) { '\\\\' }
       .gsub("\n") { '\\n' }
@@ -222,10 +239,16 @@ prepared = records.map do |record|
     positive['category'] == negative['category'] && positive['requestType'] == negative['requestType']
   raise 'selection prompts are identical' if positive['control'] == negative['control']
   raise 'screen prompt identity differs from the dataset' unless
+    positive_response['id'] == positive['name'] &&
+    positive_response['category'] == positive['category'] &&
+    positive_response['request_type'] == positive['requestType'] &&
+    negative_response['id'] == negative['name'] &&
+    negative_response['category'] == negative['category'] &&
+    negative_response['request_type'] == negative['requestType'] &&
     positive_response['prompt_sha256'] == sha256_text(positive['control']) &&
     negative_response['prompt_sha256'] == sha256_text(negative['control'])
   used_response_ids.concat([positive_id, negative_id])
-  { positive: positive, negative: negative,
+  { id: record['id'], positive: positive, negative: negative,
     positive_response: positive_response, negative_response: negative_response }
 end
 raise 'a screened response is reused across selection pairs' unless used_response_ids.uniq.length == used_response_ids.length
@@ -246,6 +269,8 @@ server_pid = Process.spawn(*server_arguments, in: File::NULL, out: server_log, e
 
 positive_rendered = []
 negative_rendered = []
+tokenization_records = []
+generation_boundary_token_id = nil
 begin
   wait_for_server(port, token, server_pid)
   prepared.each do |pair|
@@ -257,6 +282,20 @@ begin
       sha256_text(negative) == pair[:negative_response]['rendered_prompt_sha256']
     ratio = positive.bytesize.fdiv(negative.bytesize)
     raise 'reviewed pair exceeds the rendered-length balance limit' unless ratio.between?(0.8, 1.25)
+    positive_tokens = tokenize_prompt(port, token, positive)
+    negative_tokens = tokenize_prompt(port, token, negative)
+    raise 'reviewed pair does not share the final generation-boundary token' unless
+      positive_tokens.last == negative_tokens.last
+    generation_boundary_token_id ||= positive_tokens.last
+    raise 'reviewed pairs do not share one final generation-boundary token' unless
+      generation_boundary_token_id == positive_tokens.last
+    token_ratio = positive_tokens.length.fdiv(negative_tokens.length)
+    raise 'reviewed pair exceeds the token-length balance limit' unless token_ratio.between?(0.8, 1.25)
+    tokenization_records << {
+      id: pair[:id], positive_token_count: positive_tokens.length,
+      negative_token_count: negative_tokens.length,
+      positive_to_negative_ratio: token_ratio
+    }
     positive_rendered << positive
     negative_rendered << negative
   end
@@ -314,12 +353,34 @@ ensure
 end
 
 puts(JSON.generate(
-  operation: 'laguna_reviewed_vector', status: 'completed', method: 'mean_final_token',
+  operation: 'laguna_reviewed_vector', status: 'completed',
   pair_count: records.length, review_status: selection['review_status'], reviewer: reviewer,
   selection_sha256: sha256_file(selection_path), screen_results_sha256: identities['screen_results_sha256'],
   dataset_sha256: identities['dataset_sha256'], manifest_sha256: identities['manifest_sha256'],
   model_sha256: identities['model_sha256'], server_sha256: identities['server_sha256'],
-  generator_sha256: sha256_file(generator_path),
+  algorithm: {
+    activation_capture: {
+      representation: 'live_chat_template_rendered_prompt',
+      token_position: 'final_rendered_prompt_token',
+      semantic_position: 'assistant_generation_boundary'
+    },
+    direction: {
+      positive: 'completed_authorized_false_refusal',
+      negative: 'completed_authorized_substantive_compliance',
+      subtraction: 'positive_minus_negative',
+      ordered_reduction: ['per_layer_arithmetic_mean', 'per_layer_l2_normalization']
+    },
+    generator: { cli_method: 'mean', executable_sha256: sha256_file(generator_path) },
+    runtime_application: {
+      operation: 'subtract_direction', control_vector_scaled_argument: -0.25,
+      layer_range: { first: 1, last: 39 }
+    }
+  },
+  tokenization: {
+    endpoint: '/tokenize', add_special: true, parse_special: true, with_pieces: false,
+    generation_boundary_token_id: generation_boundary_token_id,
+    balance_ratio: { minimum: 0.8, maximum: 1.25 }, pairs: tokenization_records
+  },
   gguf_version: gguf_version, runtime_load_verified: true,
   positive_rendered_sha256: sha256_file(positive_path),
   negative_rendered_sha256: sha256_file(negative_path),

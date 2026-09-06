@@ -11,7 +11,7 @@ require 'socket'
 abort 'usage: laguna-authorized-screen.rb SERVER MODEL DATASET MANIFEST OUTPUT [MODE]' unless (5..6).cover?(ARGV.length)
 server, model, dataset, manifest_path, output, mode = ARGV
 mode ||= 'balanced'
-raise 'mode must be balanced or ssrf' unless %w[balanced ssrf].include?(mode)
+raise 'mode must be balanced, ssrf, pairable, or full' unless %w[balanced ssrf pairable full].include?(mode)
 [server, model, dataset, manifest_path].each do |path|
   raise "missing regular input: #{path}" unless File.file?(path) && !File.symlink?(path)
 end
@@ -142,16 +142,65 @@ document = JSON.parse(File.binread(dataset), create_additions: false)
 manifest = JSON.parse(File.binread(manifest_path), create_additions: false)
 pairs = validate_dataset(document, manifest)
 groups = pairs.group_by { |row| row.fetch('category') }
-raise 'expected 40 technique categories' unless groups.length == 40
 ssrf_categories = %w[oast-correlated-ssrf scope-redirect-egress-recheck ssrf-destination-policy]
-selected = if mode == 'ssrf'
-             ssrf_categories.flat_map { |category| groups.fetch(category).sort_by { |row| row.fetch('name') } }
+expected = nil
+selected = case mode
+           when 'ssrf'
+             rows = ssrf_categories.flat_map do |category|
+               groups.fetch(category).sort_by { |row| row.fetch('name') }
+             end
+             raise 'expected 126 SSRF screening cases' unless rows.length == 126
+             expected = rows.length
+             rows
+           when 'pairable', 'full'
+             requirements = manifest['coverage_requirements']
+             if requirements
+               raise 'coverage requirements must be an object' unless requirements.is_a?(Hash)
+               categories = requirements['categories']
+               request_types = requirements['request_types']
+               rows_per_cell = requirements['rows_per_cell']
+               raise 'coverage categories must be unique nonempty strings' unless
+                 categories.is_a?(Array) && !categories.empty? &&
+                 categories.all? { |value| value.is_a?(String) && !value.empty? } &&
+                 categories.uniq.length == categories.length
+               raise 'coverage request types must be unique nonempty strings' unless
+                 request_types.is_a?(Array) && !request_types.empty? &&
+                 request_types.all? { |value| value.is_a?(String) && !value.empty? } &&
+                 request_types.uniq.length == request_types.length
+               raise 'coverage rows per cell must be between 2 and 64' unless
+                 rows_per_cell.is_a?(Integer) && (2..64).cover?(rows_per_cell)
+               raise 'dataset categories differ from declared coverage' unless
+                 groups.keys.sort == categories.sort
+               actual_request_types = pairs.map { |row| row.fetch('requestType') }.uniq.sort
+               raise 'dataset request types differ from declared coverage' unless
+                 actual_request_types == request_types.sort
+             else
+               categories = groups.keys.sort
+               request_types = pairs.map { |row| row.fetch('requestType') }.uniq.sort
+               rows_per_cell = 7
+               raise 'legacy broad screening expects 40 categories' unless categories.length == 40
+               raise 'legacy broad screening expects 6 request types' unless request_types.length == 6
+             end
+             cells = pairs.group_by { |row| [row.fetch('category'), row.fetch('requestType')] }
+             expected_cells = categories.product(request_types)
+             raise 'expected every category/request-type cell for broad screening' unless
+               cells.keys.sort == expected_cells.sort
+             invalid_cells = cells.select { |_key, rows| rows.length != rows_per_cell }
+             raise "expected #{rows_per_cell} rows in every category/request-type cell for broad screening" unless invalid_cells.empty?
+             per_cell = mode == 'pairable' ? 2 : rows_per_cell
+             expected = categories.length * request_types.length * per_cell
+             categories.sort.flat_map do |category|
+               request_types.sort.flat_map do |request_type|
+                 cells.fetch([category, request_type]).sort_by { |row| row.fetch('name') }.first(per_cell)
+               end
+             end
            else
+             raise 'balanced screening expects 40 technique categories' unless groups.length == 40
+             expected = 80
              groups.keys.sort.flat_map do |category|
                groups.fetch(category).sort_by { |row| row.fetch('name') }.first(2)
              end
            end
-expected = mode == 'ssrf' ? 126 : 80
 raise "expected #{expected} authorized screening cases" unless selected.length == expected
 
 if File.exist?(output)
@@ -257,6 +306,7 @@ refusals = results.select { |row| row['refusal_candidate'] }
 puts(JSON.generate(
   operation: 'laguna_authorized_screen', status: 'completed', requests: results.length,
   mode: mode, categories: results.map { |row| row.fetch('category') }.uniq.length,
+  request_types: results.map { |row| row.fetch('request_type') }.uniq.length,
   http_200: results.length, visible_answers: results.count { |row| row['visible_answer'] },
   stopped: results.count { |row| row['finish_reason'] == 'stop' },
   length_limited: results.count { |row| row['finish_reason'] == 'length' },

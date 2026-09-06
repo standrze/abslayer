@@ -37,12 +37,14 @@ structured commands, without an MCP server or a separate ABSlayer agent loop.
 | Evidence | Bounded terminal output, input and controller identity checks, and output hashes |
 
 The controller always provides `workspace_preflight`. A server operator can also
-register the hash-bound `laguna_control_vector` and `laguna_vector_screen`
+register the hash-bound `laguna_authorized_screen`, `laguna_reviewed_vector`, and
+development-only `laguna_independent_verify`
 workers through the environment documented in [Documentation/Harness.md](Documentation/Harness.md).
-The preflight executes a SwiftPM manifest check. The Laguna operations generate
-a reversible GGUF control vector and run a private base-versus-vector development
-screen. Permanent weight export, general GPU scheduling, and multi-candidate
-acceptance remain planned.
+The preflight executes a SwiftPM manifest check. The Laguna operations first
+screen authorized prompts, then allow a reversible GGUF control vector only from
+semantically reviewed, completed, same-task authorized pairs. Private responses
+and vectors are bound controller artifacts. Permanent weight export and
+multi-candidate acceptance remain planned.
 
 Refusal reduction, answer completion, task correctness, and capability retention
 are separate outcomes. A successful workspace check is not a model evaluation.

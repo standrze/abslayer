@@ -36,6 +36,39 @@ $stderr.write(errors)
 assert(status.success?, 'Controller build failed')
 host = host.strip
 
+Dir.mktmpdir('abslayer-capabilities-') do |temporary|
+  environment = {
+    'ABSLAYER_RUBY' => RbConfig.ruby,
+    'ABSLAYER_LAGUNA_AUTHORIZED_SCREEN_WORKER' => __FILE__,
+    'ABSLAYER_LAGUNA_SERVER' => __FILE__,
+    'ABSLAYER_LAGUNA_MODEL' => __FILE__,
+    'ABSLAYER_LAGUNA_AUTHORIZED_DATASET' => __FILE__,
+    'ABSLAYER_LAGUNA_AUTHORIZED_MANIFEST' => __FILE__,
+    'ABSLAYER_LAGUNA_AUTHORIZED_SCREEN_OUTPUT' => File.join(temporary, 'screen'),
+    'ABSLAYER_LAGUNA_REVIEWED_VECTOR_WORKER' => __FILE__,
+    'ABSLAYER_LAGUNA_REVIEWED_SELECTION' => __FILE__,
+    'ABSLAYER_LAGUNA_REVIEWED_SCREEN_RESULTS' => __FILE__,
+    'ABSLAYER_LAGUNA_GENERATOR' => __FILE__,
+    'ABSLAYER_LAGUNA_REVIEWED_VECTOR_OUTPUT' => File.join(temporary, 'vector'),
+    # Supplying the withdrawn configuration must not restore its operations.
+    'ABSLAYER_LAGUNA_WORKER' => __FILE__,
+    'ABSLAYER_LAGUNA_DATASET' => __FILE__,
+    'ABSLAYER_LAGUNA_OUTPUT' => File.join(temporary, 'legacy-vector'),
+    'ABSLAYER_LAGUNA_SCREEN_WORKER' => __FILE__,
+    'ABSLAYER_LAGUNA_VECTOR' => __FILE__,
+    'ABSLAYER_LAGUNA_SCREEN_DATASET' => __FILE__,
+    'ABSLAYER_LAGUNA_SCREEN_OUTPUT' => File.join(temporary, 'legacy-screen')
+  }
+  response = call_json(environment, host, 'request', ROOT, File.join(temporary, 'state'), RbConfig.ruby,
+                       input: {method: 'capabilities'})
+  operations = response.fetch('operations')
+  assert(operations.include?('laguna_authorized_screen'), 'Authorized screen was not registered')
+  assert(operations.include?('laguna_reviewed_vector'), 'Reviewed vector was not registered')
+  assert(!operations.include?('laguna_control_vector') && !operations.include?('laguna_vector_screen'),
+         'Withdrawn Laguna operations remain callable')
+  puts 'PASS: replacement Laguna operations register and withdrawn operations stay unavailable'
+end
+
 Dir.mktmpdir('abslayer-bridge-') do |temporary|
   environment = {'ABSLAYER_STATE_DIR' => File.join(temporary, 'state')}
   request = {method: 'submit', operation: 'workspace_preflight', idempotencyKey: 'shared-client-run', timeoutSeconds: 60}
@@ -80,12 +113,19 @@ Dir.mktmpdir('abslayer-crash-') do |temporary|
     assert(system(host, 'drain', workspace, state, worker), 'Recovery host failed')
     blocked = call_json(*command, input: {method: 'status', jobID: second['id']}).fetch('job')
     assert(blocked['state'] == 'queued', 'New worker overlapped the orphan')
-    sleep 2.1
-    assert(system(host, 'drain', workspace, state, worker), 'Post-orphan recovery failed')
-    recovered = call_json(*command, input: {method: 'status', jobID: first['id']}).fetch('job')
-    final = call_json(*command, input: {method: 'status', jobID: second['id']}).fetch('job')
-    assert(recovered['state'] == 'interrupted', 'Crashed job was falsely completed or automatically retried')
-    assert(final['state'] == 'completed', 'Queued job did not resume after the lease cleared')
+    recovered, final = wait_for(seconds: 10) do
+      assert(system(host, 'drain', workspace, state, worker), 'Post-orphan recovery failed')
+      first_status = call_json(*command, input: {method: 'status', jobID: first['id']}).fetch('job')
+      second_status = call_json(*command, input: {method: 'status', jobID: second['id']}).fetch('job')
+      if first_status['state'] == 'interrupted' && second_status['state'] == 'completed'
+        [first_status, second_status]
+      elsif %w[failed cancelled completed].include?(first_status['state']) ||
+            %w[failed cancelled interrupted].include?(second_status['state'])
+        raise "Unexpected recovery state: #{first_status} / #{second_status}"
+      end
+    end
+    assert(recovered['state'] == 'interrupted', "Crashed job was falsely completed or automatically retried: #{recovered}")
+    assert(final['state'] == 'completed', "Queued job did not resume after the lease cleared: #{final}")
     puts 'PASS: supervisor crash, inherited orphan lease, interrupted-state recovery, queued-work continuation'
   ensure
     if supervisor

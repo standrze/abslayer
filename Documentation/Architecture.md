@@ -16,8 +16,9 @@ are outside this scope. See [Harness structure](Harness.md) for the proposed
 components and operation surface.
 
 The existing engine is retained. A shared skill, structured command bridge, and
-durable Swift controller now execute workspace-preflight jobs. The integrated
-model-experiment lifecycle and model worker adapters below still need implementation.
+durable Swift controller execute workspace preflight and configuration-bound
+Laguna screening, reviewed-vector, and independent development-verification jobs.
+The broader multi-candidate experiment lifecycle still needs implementation.
 
 ## Responsibilities
 
@@ -25,11 +26,11 @@ model-experiment lifecycle and model worker adapters below still need implementa
 | --- | --- | --- |
 | Native engine | Model inspection, activation capture, interventions, adapter training, evaluation, export | Existing Swift/MLX code retained |
 | Experiment controller | Candidate lifecycle, budgets, scheduling, checkpoints, resource locks, acceptance policy | First durable job lifecycle implemented; multi-candidate/model policy remains planned |
-| Durable worker service | Run jobs independently of the client connection; provide job IDs, progress, cancellation and recovery | Implemented for workspace preflight; model workers and exact resume remain planned |
+| Durable worker service | Run jobs independently of the client connection; provide job IDs, progress, cancellation and recovery | Implemented for preflight and the configured Laguna workers; exact process resume remains planned |
 | Shared skills and command bridge | Supply the same workflows to Pool CLI and Codex CLI; submit typed operations through their existing command tools | One shared skill and Ruby bridge implemented; live model-driven client sessions not yet tested |
 | Research assistant | Interpret development evidence and propose structured experiments | Initially supplied by the agent client |
 | Evaluation | Executable task checks, calibrated judgments, independent retention measurements, final held-out assessment | Existing pieces require consolidation |
-| Artifact package | Exact model identity, intervention, runtime settings, results and provenance | Existing formats require a shared contract |
+| Artifact package | Exact model identity, intervention, runtime settings, results and provenance | Controller binds terminal streams plus declared private-response/vector artifacts; broader formats still need a shared contract |
 
 ## Integration approach
 

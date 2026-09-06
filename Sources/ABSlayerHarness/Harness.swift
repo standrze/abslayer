@@ -11,9 +11,11 @@ public struct WorkerPlan: Sendable {
     public var arguments: [String]
     public var environment: [String: String]
     public var inputs: [URL]
-    public init(executable: URL, arguments: [String], environment: [String: String], inputs: [URL]) {
+    public var artifacts: [String: URL]
+    public init(executable: URL, arguments: [String], environment: [String: String], inputs: [URL],
+                artifacts: [String: URL] = [:]) {
         self.executable = executable; self.arguments = arguments
-        self.environment = environment; self.inputs = inputs
+        self.environment = environment; self.inputs = inputs; self.artifacts = artifacts
     }
 }
 
@@ -25,13 +27,20 @@ public final class Harness: @unchecked Sendable {
     private let controller: FileBinding
     private let manager = FileManager.default
     static let outputLimit = 2 * 1_024 * 1_024
+    static let artifactLimit = 64 * 1_024 * 1_024
 
     public convenience init(workspace: URL, root: URL, plan: WorkerPlan) throws {
         try self.init(workspace: workspace, root: root, plans: ["workspace_preflight": plan])
     }
 
     public init(workspace: URL, root: URL, plans: [String: WorkerPlan]) throws {
-        guard !plans.isEmpty, plans.keys.allSatisfy({ !$0.isEmpty }) else {
+        let artifactNames = plans.values.flatMap { $0.artifacts.keys }
+        guard !plans.isEmpty, plans.keys.allSatisfy({ !$0.isEmpty }),
+              artifactNames.allSatisfy({ name in
+                  !name.isEmpty && name != "stdout" && name != "stderr" &&
+                  name.unicodeScalars.allSatisfy { CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "_.-")).contains($0) }
+              }),
+              plans.values.allSatisfy({ plan in Set(plan.artifacts.values.map(\.standardizedFileURL.path)).count == plan.artifacts.count }) else {
             throw HarnessError("invalid_configuration", "At least one named worker plan is required.")
         }
         self.workspace = workspace.standardizedFileURL.resolvingSymlinksInPath()
@@ -68,22 +77,24 @@ public final class Harness: @unchecked Sendable {
             response.operations = plans.keys.sorted()
             response.message = "Named, configuration-bound operations only. Execution never implies candidate acceptance. Methods: submit, status, cancel, evidence, recover."
         case "submit":
-            response.job = JobSummary(try submit(request), root: root)
+            response.job = try summary(submit(request))
         case "status":
             if request.jobID.isEmpty {
-                response.jobs = try transaction { $0.jobs.suffix(20).reversed().map { JobSummary($0, root: root) } }
+                let recent = try transaction { Array($0.jobs.suffix(20).reversed()) }
+                response.jobs = try recent.map(summary)
                 response.message = "Most recent 20 jobs; use jobID for a specific job."
-            } else { response.job = JobSummary(try job(request.jobID), root: root) }
+            } else { response.job = try summary(job(request.jobID)) }
         case "cancel":
-            response.job = try transaction { store in
+            let current = try transaction { store in
                 let index = try index(request.jobID, in: store)
                 if !store.jobs[index].state.terminal {
                     store.jobs[index].cancelRequested = true
                     store.jobs[index].updatedAt = Date()
                     if store.jobs[index].state == .queued { store.jobs[index].transition(.cancelled) }
                 }
-                return JobSummary(store.jobs[index], root: root)
+                return store.jobs[index]
             }
+            response.job = try summary(current)
         case "recover":
             response.message = "A drain/reconciliation attempt is requested. An inherited worker lease must clear before interrupted jobs can be reconciled. Interrupted jobs are never retried automatically."
         case "evidence":
@@ -91,17 +102,13 @@ public final class Harness: @unchecked Sendable {
             guard current.state.terminal, let binding = current.outputs[request.stream] else {
                 throw HarnessError("evidence_unavailable", "Bound evidence is available only after the worker has stopped and outputs have been recorded.")
             }
+            try validateRecordedOutputs(current)
             let url = directory(current.id).appendingPathComponent(request.stream + ".log")
-            guard try Persistence.binding(url) == binding else {
-                throw HarnessError("artifact_changed", "Recorded output bytes no longer match their identity.")
-            }
-            let handle = try FileHandle(forReadingFrom: url)
-            defer { try? handle.close() }
+            let data = try Persistence.verifiedData(url, matching: binding, maxBytes: Self.outputLimit)
             let offset = min(request.offset, binding.bytes)
-            try handle.seek(toOffset: UInt64(offset))
-            let data = try handle.read(upToCount: request.limit) ?? Data()
-            response.text = String(decoding: data, as: UTF8.self)
-            response.nextOffset = offset + data.count < binding.bytes ? offset + data.count : nil
+            let end = min(binding.bytes, offset + request.limit)
+            response.text = String(decoding: data[offset..<end], as: UTF8.self)
+            response.nextOffset = end < binding.bytes ? end : nil
             response.artifact = binding
         default: throw HarnessError("invalid_request", "Unknown method.")
         }
@@ -121,10 +128,17 @@ public final class Harness: @unchecked Sendable {
         let digest = Persistence.digest(try Persistence.encode(ExecutionIdentity(
             workspace: workspace.path, operation: request.operation, timeout: request.timeoutSeconds,
             inputs: inputs, executable: executable, controller: controller,
+            arguments: plan.arguments, environment: plan.environment,
+            artifactPaths: plan.artifacts.mapValues { $0.standardizedFileURL.path })))
+        let legacyDigest = Persistence.digest(try Persistence.encode(LegacyExecutionIdentity(
+            workspace: workspace.path, operation: request.operation, timeout: request.timeoutSeconds,
+            inputs: inputs, executable: executable, controller: controller,
             arguments: plan.arguments, environment: plan.environment)))
         return try transaction { store in
             if let previous = store.jobs.first(where: { $0.idempotencyKey == request.idempotencyKey }) {
-                guard previous.requestDigest == digest else {
+                let sameRequest = previous.requestDigest == digest ||
+                    (previous.artifactPaths == nil && plan.artifacts.isEmpty && previous.requestDigest == legacyDigest)
+                guard sameRequest else {
                     throw HarnessError("idempotency_conflict", "This key already names a different request or input identity. Inspect its job; use a new key for an intentional new attempt.")
                 }
                 return previous
@@ -137,14 +151,15 @@ public final class Harness: @unchecked Sendable {
                           operation: request.operation, timeoutSeconds: request.timeoutSeconds,
                           state: .queued, createdAt: now, updatedAt: now, cancelRequested: false,
                           inputs: inputs, executable: executable, controller: controller, arguments: plan.arguments,
-                          environment: plan.environment, outputs: [:],
+                          environment: plan.environment,
+                          artifactPaths: plan.artifacts.mapValues { $0.standardizedFileURL.path }, outputs: [:],
                           events: [.init(state: .queued, time: now)])
             store.jobs.append(job)
             return job
         }
     }
 
-    public func job(_ id: String) throws -> Job {
+    func job(_ id: String) throws -> Job {
         try transaction { store in store.jobs[try index(id, in: store)] }
     }
 
@@ -178,6 +193,7 @@ public final class Harness: @unchecked Sendable {
 
     private func run(_ submitted: Job, lease: Int32) throws {
         var result = submitted
+        var attemptedOutputBinding = false
         do {
             try validateBindings(submitted)
             let worker = try SpawnedWorker(job: submitted, directory: directory(submitted.id),
@@ -209,12 +225,18 @@ public final class Harness: @unchecked Sendable {
             result.cancelRequested = try job(submitted.id).cancelRequested
             if result.cancelRequested { cancelled = true }
             try validateBindings(submitted)
+            attemptedOutputBinding = true
             result.outputs = try bindingsForOutputs(submitted.id)
             if cancelled { result.transition(.cancelled, reason: reason) }
             else if let reason { result.transition(.failed, reason: reason) }
             else if try logSize(submitted.id) > Self.outputLimit { result.transition(.failed, reason: "Worker exceeded its output budget.") }
             else if exit == 0 {
-                let data = try Data(contentsOf: directory(submitted.id).appendingPathComponent("stdout.log"))
+                guard let stdout = result.outputs["stdout"] else {
+                    throw HarnessError("invalid_worker_result", "Worker did not publish a stdout manifest.")
+                }
+                let data = try Persistence.verifiedData(
+                    directory(submitted.id).appendingPathComponent("stdout.log"),
+                    matching: stdout, maxBytes: Self.outputLimit)
                 try validateUniqueJSONKeys(data)
                 guard let manifest = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
                     throw HarnessError("invalid_worker_result", "Worker did not return one JSON object.")
@@ -230,10 +252,27 @@ public final class Harness: @unchecked Sendable {
                         throw HarnessError("invalid_worker_result", "Worker result does not identify the completed operation.")
                     }
                 }
+                for (name, url) in try planArtifacts(submitted) {
+                    let binding = try Persistence.binding(url, maxBytes: Self.artifactLimit)
+                    guard let described = manifest[name] as? [String: Any],
+                          let bytes = manifestInteger(described["bytes"]),
+                          bytes == binding.bytes else {
+                        throw HarnessError("invalid_worker_result", "Worker result has an invalid artifact byte count: \(name)")
+                    }
+                    guard described["path"] as? String == url.path,
+                          described["sha256"] as? String == binding.sha256,
+                          bytes == binding.bytes else {
+                        throw HarnessError("invalid_worker_result", "Worker result does not bind declared artifact: \(name)")
+                    }
+                    result.outputs[name] = binding
+                }
                 result.transition(.completed)
             } else { result.transition(.failed, reason: "Worker exited with status \(exit ?? -1).") }
         } catch {
-            result.outputs = (try? bindingsForOutputs(submitted.id)) ?? [:]
+            if !attemptedOutputBinding {
+                attemptedOutputBinding = true
+                result.outputs = (try? bindingsForOutputs(submitted.id)) ?? [:]
+            }
             result.transition(.failed, reason: error.localizedDescription)
         }
         try transaction { store in
@@ -248,16 +287,26 @@ public final class Harness: @unchecked Sendable {
         guard let plan = plans[job.operation] else {
             throw HarnessError("request_changed", "The accepted operation is no longer configured.")
         }
-        let expectedDigest = Persistence.digest(try Persistence.encode(ExecutionIdentity(
-            workspace: workspace.path, operation: job.operation, timeout: job.timeoutSeconds,
-            inputs: job.inputs, executable: job.executable, controller: job.controller,
-            arguments: job.arguments, environment: job.environment)))
+        let expectedDigest: String
+        if let artifactPaths = job.artifactPaths {
+            expectedDigest = Persistence.digest(try Persistence.encode(ExecutionIdentity(
+                workspace: workspace.path, operation: job.operation, timeout: job.timeoutSeconds,
+                inputs: job.inputs, executable: job.executable, controller: job.controller,
+                arguments: job.arguments, environment: job.environment, artifactPaths: artifactPaths)))
+        } else {
+            expectedDigest = Persistence.digest(try Persistence.encode(LegacyExecutionIdentity(
+                workspace: workspace.path, operation: job.operation, timeout: job.timeoutSeconds,
+                inputs: job.inputs, executable: job.executable, controller: job.controller,
+                arguments: job.arguments, environment: job.environment)))
+        }
+        let plannedArtifactPaths = plan.artifacts.mapValues { $0.standardizedFileURL.path }
         let checks = [
             ("operation", plans[job.operation] != nil),
             ("timeout", (1...3_600).contains(job.timeoutSeconds)),
             ("request digest", job.requestDigest == expectedDigest),
             ("arguments", job.arguments == plan.arguments),
             ("environment", job.environment == plan.environment),
+            ("artifact paths", job.artifactPaths.map { $0 == plannedArtifactPaths } ?? plannedArtifactPaths.isEmpty),
             ("executable path", job.executable.path == plan.executable.path),
             ("input paths", job.inputs.map(\.path) == plan.inputs.map(\.path)),
             ("controller", job.controller == controller),
@@ -274,11 +323,64 @@ public final class Harness: @unchecked Sendable {
     }
     private func bindingsForOutputs(_ id: String) throws -> [String: FileBinding] {
         var bindings: [String: FileBinding] = [:]
+        var remaining = Self.outputLimit
         for stream in ["stdout", "stderr"] {
             let path = directory(id).appendingPathComponent(stream + ".log")
-            if manager.fileExists(atPath: path.path) { bindings[stream] = try Persistence.binding(path) }
+            if manager.fileExists(atPath: path.path) {
+                let binding = try Persistence.binding(path, maxBytes: remaining)
+                bindings[stream] = binding
+                remaining -= binding.bytes
+            }
         }
         return bindings
+    }
+    private func planArtifacts(_ job: Job) throws -> [String: URL] {
+        guard let plan = plans[job.operation],
+              (job.artifactPaths ?? [:]) == plan.artifacts.mapValues({ $0.standardizedFileURL.path }) else {
+            throw HarnessError("request_changed", "Declared artifact paths differ from the accepted request.")
+        }
+        return plan.artifacts.mapValues(\.standardizedFileURL)
+    }
+    private func summary(_ job: Job) throws -> JobSummary {
+        if job.state.terminal { try validateRecordedOutputs(job) }
+        return JobSummary(job, root: root)
+    }
+    private func validateRecordedOutputs(_ job: Job) throws {
+        let persistedDigest: String
+        if let artifactPaths = job.artifactPaths {
+            persistedDigest = Persistence.digest(try Persistence.encode(ExecutionIdentity(
+                workspace: workspace.path, operation: job.operation, timeout: job.timeoutSeconds,
+                inputs: job.inputs, executable: job.executable, controller: job.controller,
+                arguments: job.arguments, environment: job.environment, artifactPaths: artifactPaths)))
+        } else {
+            persistedDigest = Persistence.digest(try Persistence.encode(LegacyExecutionIdentity(
+                workspace: workspace.path, operation: job.operation, timeout: job.timeoutSeconds,
+                inputs: job.inputs, executable: job.executable, controller: job.controller,
+                arguments: job.arguments, environment: job.environment)))
+        }
+        guard persistedDigest == job.requestDigest else {
+            throw HarnessError("artifact_changed", "Persisted output identity differs from the accepted request.")
+        }
+        var expected = [
+            "stdout": directory(job.id).appendingPathComponent("stdout.log").path,
+            "stderr": directory(job.id).appendingPathComponent("stderr.log").path,
+        ]
+        for (name, path) in job.artifactPaths ?? [:] { expected[name] = path }
+        let actualNames = Set(job.outputs.keys)
+        let expectedNames = Set(expected.keys)
+        guard actualNames.isSubset(of: expectedNames),
+              job.state != .completed || actualNames == expectedNames else {
+            throw HarnessError("artifact_changed", "Recorded output keys differ from the accepted request.")
+        }
+        for (name, binding) in job.outputs {
+            guard binding.path == expected[name] else {
+                throw HarnessError("artifact_changed", "Recorded output path changed: \(name)")
+            }
+            let limit = name == "stdout" || name == "stderr" ? Self.outputLimit : Self.artifactLimit
+            guard try Persistence.binding(URL(fileURLWithPath: binding.path), maxBytes: limit) == binding else {
+                throw HarnessError("artifact_changed", "Recorded output bytes changed: \(name)")
+            }
+        }
     }
     private func logSize(_ id: String) throws -> Int {
         try ["stdout", "stderr"].reduce(0) { size, stream in
@@ -321,7 +423,32 @@ public final class Harness: @unchecked Sendable {
     }
 }
 
+private func manifestInteger(_ value: Any?) -> Int? {
+    guard let number = value as? NSNumber,
+          String(cString: number.objCType) != "c",
+          number.doubleValue.isFinite,
+          number.doubleValue >= 0,
+          number.doubleValue <= Double(Int.max),
+          number.doubleValue.rounded() == number.doubleValue else { return nil }
+    return number.intValue
+}
+
 private struct ExecutionIdentity: Encodable {
+    let workspace: String
+    let operation: String
+    let timeout: Int
+    let inputs: [FileBinding]
+    let executable: FileBinding
+    let controller: FileBinding
+    let arguments: [String]
+    let environment: [String: String]
+    let artifactPaths: [String: String]
+}
+
+// Schema-1 jobs created before declared artifacts omitted artifactPaths from the
+// request digest. They remain deduplicable only when the configured plan still
+// declares no artifacts; controller/executable/input bindings still must match.
+private struct LegacyExecutionIdentity: Encodable {
     let workspace: String
     let operation: String
     let timeout: Int

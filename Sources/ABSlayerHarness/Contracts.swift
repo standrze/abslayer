@@ -41,6 +41,8 @@ public struct Job: Codable, Sendable {
     public var controller: FileBinding
     public var arguments: [String]
     public var environment: [String: String]
+    // Optional so schema-1 state written before declared artifacts remains readable.
+    public var artifactPaths: [String: String]?
     public var workerPID: Int32?
     public var exitCode: Int32?
     public var failure: String?

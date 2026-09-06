@@ -21,13 +21,15 @@ begin
   raise 'Swift executable not found.' unless swift && File.executable?(swift)
   swift = File.expand_path(swift)
   state = File.expand_path(ENV.fetch('ABSLAYER_STATE_DIR', File.join(root, '.abslayer', 'state')))
-  output, errors, status = Open3.capture3(host, 'request', root, state, swift, stdin_data: input, chdir: root)
+  controller_environment = {'ABSLAYER_RUBY' => RbConfig.ruby}
+  output, errors, status = Open3.capture3(controller_environment, host, 'request', root, state, swift,
+                                          stdin_data: input, chdir: root)
   $stderr.write(errors)
   response = JSON.parse(output)
   if status.success? && response['ok'] && response['needsDrain']
     log = File.open(File.join(state, 'host.log'), File::WRONLY | File::APPEND | File::CREAT, 0600)
     begin
-      pid = Process.spawn(host, 'drain', root, state, swift,
+      pid = Process.spawn(controller_environment, host, 'drain', root, state, swift,
                           in: File::NULL, out: log, err: log, pgroup: true, chdir: root)
       Process.detach(pid)
     ensure

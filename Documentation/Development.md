@@ -38,12 +38,15 @@ model graph or rewrite its dependency pins:
 ruby Scripts/build-harness.rb build
 ruby Scripts/build-harness.rb test
 ruby Tests/HarnessIntegrationTests.rb
+ruby Tests/LagunaWorkerTests.rb
 ```
 
 The helper stages a manifest using `ABSLAYER_HARNESS_ONLY=1` under
 `.build-harness/`, with links to the real controller sources and tests. Do not use
 that reduced graph to resolve dependencies in the product root. The bridge
-auto-builds this controller and supports `workspace_preflight`; see
+auto-builds this controller and always supports `workspace_preflight`. A host may
+also register the Laguna authorized-screen, reviewed-vector, and independent
+development-verification workers; see
 [Harness](Harness.md) for its JSON contract, guarantees, and current limitations.
 
 Original migration archives and their verification scripts are local recovery

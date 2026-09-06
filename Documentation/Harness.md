@@ -1,4 +1,4 @@
-**ABSlayer with Pool CLI and Codex CLI — first working slice, September 4, 2026**
+**ABSlayer with Pool CLI and Codex CLI — durable experiment harness, September 5, 2026**
 
 Pool CLI or Codex CLI supplies the agent harness: conversation, model connection,
 skill loading, and tool-calling loop. ABSlayer supplies one shared project skill,
@@ -7,11 +7,12 @@ ABSlayer model loop is involved.
 
 **Available now**
 
-The bridge always implements `workspace_preflight`: evaluate this workspace's complete
-SwiftPM manifest using `swift package dump-package`. It does not resolve model
-dependencies, load model weights, or read datasets. Jobs are persisted before
-acknowledgement, run in a detached local process, and can be inspected from a
-fresh invocation of either client's command tool.
+The bridge always implements `workspace_preflight`: evaluate this workspace's
+complete SwiftPM manifest using `swift package dump-package`. A configured host
+can additionally expose an authorized Laguna screen, reviewed control-vector
+generation, and an independent private development comparison. Jobs are
+persisted before acknowledgement, run in a detached local process, and can be
+inspected from a fresh invocation of either client's command tool.
 
 ```mermaid
 flowchart TD
@@ -20,8 +21,8 @@ flowchart TD
     S --> T[Client command tool]
     T --> B[Ruby bridge: structured JSON]
     B --> H[Swift job controller]
-    H --> W[SwiftPM workspace preflight]
-    H <--> D[Persistent jobs and bound output files]
+    H --> W[Bound preflight or Laguna worker]
+    H <--> D[Persistent jobs and bound streams/artifacts]
     D --> B
 ```
 
@@ -35,7 +36,7 @@ See [Pool CLI](https://docs.poolside.ai/cli/cli-reference) and
 **Use from either client**
 
 Start Pool CLI or Codex CLI in the project directory, then invoke
-`$abslayer-experiment` for workspace preflight or job management. Both products
+`$abslayer-experiment` for a listed operation or job management. Both products
 document `.agents/skills/` discovery. The skill calls the client's existing
 command tool; installing it does not inject custom native functions. See
 [Pool skills](https://docs.poolside.ai/skills) and
@@ -70,15 +71,17 @@ are not presented as immutable evidence.
 Use one idempotency key per intended run. Repeating it with the same request and
 input identities returns the original job. Changing inputs, timeout, runtime
 configuration, or controller binary under the same key returns a conflict. An
-intentional new attempt needs a new key. The worker timeout is 1–120 seconds and
+intentional new attempt needs a new key. The worker timeout is 1–3600 seconds and
 does not include initial controller compilation or queue waiting.
 
 Responses are JSON on stdout; build diagnostics go to stderr. They include `ok`,
 structured errors when applicable, compact job state, the request digest, and
 output artifact references. Detailed inputs, resolved arguments/environment,
 controller/executable hashes, events, and timestamps are in the referenced
-`stateFile`. `completed` means manifest preflight completed; `acceptance` is
-always `not_evaluated`. There are no model-quality or capability metrics here.
+`stateFile`. `completed` means the configured worker returned a valid result and
+all declared artifacts matched their reported paths, sizes, and hashes;
+`acceptance` is always `not_evaluated`. Model quality still requires separate
+refusal, completion, correctness, and retention judgments.
 
 **Build and layout**
 
@@ -93,7 +96,7 @@ The helper stages the package manifest and links the real source/test directorie
 into `.build-harness/package`. `ABSLAYER_HARNESS_ONLY=1` selects only the controller
 and its tests in that staged graph. On macOS these use Foundation and CryptoKit,
 with no external packages. On Linux they use the existing pinned swift-crypto
-version; the Linux build has not been exercised in this workspace.
+version; the isolated controller has also been exercised on the Laguna host.
 
 This build isolation avoids resolving or rewriting the original engine's
 `Package.resolved`. Default product builds still include the retained native
@@ -114,21 +117,63 @@ Sources/ABSlayerHarness/
 Sources/ABSlayerJobHost/main.swift          internal request/drain entrypoint
 Tests/ABSlayerHarnessTests/                synthetic Swift controller tests
 Tests/HarnessIntegrationTests.rb           detached-process and real preflight checks
+Tests/LagunaWorkerTests.rb                  fake-server screening/vector contract checks
 .abslayer/state/                          generated private state and job artifacts
 ```
 
 `ABSLAYER_STATE_DIR` can select an isolated state directory for tests. Both
 clients must use the same state location to share jobs. `ABSLAYER_SWIFT` can
-select an absolute Swift executable. On a Laguna host, setting the complete
-`ABSLAYER_LAGUNA_WORKER`, `ABSLAYER_LAGUNA_MODEL`, `ABSLAYER_LAGUNA_DATASET`,
-`ABSLAYER_LAGUNA_GENERATOR`, and `ABSLAYER_LAGUNA_OUTPUT` group registers
-`laguna_control_vector`. The corresponding screen group is
-`ABSLAYER_LAGUNA_SCREEN_WORKER`, `ABSLAYER_LAGUNA_SERVER`,
-`ABSLAYER_LAGUNA_MODEL`, `ABSLAYER_LAGUNA_VECTOR`,
-`ABSLAYER_LAGUNA_SCREEN_DATASET`, and `ABSLAYER_LAGUNA_SCREEN_OUTPUT`;
-`ABSLAYER_LAGUNA_SCREEN_SCALE` defaults to `-0.5`. These values are host
-configuration, never JSON request fields. Every file is identity-bound when a
-job is submitted, and successful execution leaves acceptance as `not_evaluated`.
+select an absolute Swift executable. `ABSLAYER_RUBY` is resolved and supplied by
+the Ruby bridge, so a worker never depends on an unbound `PATH` lookup.
+
+On a Laguna host, the complete following group registers
+`laguna_authorized_screen`:
+
+```text
+ABSLAYER_LAGUNA_AUTHORIZED_SCREEN_WORKER
+ABSLAYER_LAGUNA_SERVER
+ABSLAYER_LAGUNA_MODEL
+ABSLAYER_LAGUNA_AUTHORIZED_DATASET
+ABSLAYER_LAGUNA_AUTHORIZED_MANIFEST
+ABSLAYER_LAGUNA_AUTHORIZED_SCREEN_OUTPUT
+ABSLAYER_LAGUNA_AUTHORIZED_SCREEN_MODE   # balanced (default) or ssrf
+```
+
+The screen validates train-split, same-operation synthetic provenance, selects
+sorted authorized `control` records, and records visible content separately from
+hidden reasoning and finish reason. It uses an authenticated per-run localhost
+server and checkpoints each response. Saved rows are revalidated against their
+raw response bodies and dataset identity before reuse. The final private response
+file is a declared controller-bound artifact. Regex matches only identify records
+for semantic review.
+
+The complete following group registers `laguna_reviewed_vector`:
+
+```text
+ABSLAYER_LAGUNA_REVIEWED_VECTOR_WORKER
+ABSLAYER_LAGUNA_REVIEWED_SELECTION
+ABSLAYER_LAGUNA_REVIEWED_SCREEN_RESULTS
+ABSLAYER_LAGUNA_AUTHORIZED_DATASET
+ABSLAYER_LAGUNA_AUTHORIZED_MANIFEST
+ABSLAYER_LAGUNA_MODEL
+ABSLAYER_LAGUNA_SERVER
+ABSLAYER_LAGUNA_GENERATOR
+ABSLAYER_LAGUNA_REVIEWED_VECTOR_OUTPUT
+```
+
+Its schema-2 selection must bind every input identity plus the full reviewer
+rubric and per-pair notes. Each side is resolved back to a completed authorized
+screen response and dataset control. Pairs must have reviewed false-refusal/
+substantive-compliance outcomes, the same category and request type, distinct
+unreused prompts, and rendered byte lengths within 0.8–1.25. The worker re-renders
+the exact Laguna template, checks it against the screen hash, preserves prompt
+escape bytes, validates the GGUF header and a target-runtime load, and publishes
+a declared controller-bound `control-vector.gguf`. The withdrawn
+`laguna_control_vector` and `laguna_vector_screen` operations are unavailable.
+
+These values are host configuration, never JSON request fields. Every input is
+identity-bound when a job is submitted, and successful execution leaves
+acceptance as `not_evaluated`.
 An independent private verification can be registered with
 `ABSLAYER_LAGUNA_VERIFY_WORKER`, `ABSLAYER_LAGUNA_SERVER`,
 `ABSLAYER_LAGUNA_MODEL`, `ABSLAYER_LAGUNA_VECTOR`,
@@ -136,6 +181,11 @@ An independent private verification can be registered with
 `ABSLAYER_LAGUNA_VERIFY_SCALE` defaults to `-0.25`.
 These are local support settings, not parameters a JSON request can turn into
 arbitrary worker commands.
+
+Configured executables, input files, their parent directories, state, and artifact
+destinations are a trusted local-storage boundary. Hash checks detect accidental
+or persistent drift; they do not isolate the controller from a malicious process
+running as the same user and swapping a configured path during execution.
 
 **Execution and recovery guarantees**
 
@@ -155,15 +205,20 @@ Normal cancellation and timeout signal the worker's process group, escalating to
 termination if needed. Terminal state is recorded after the direct worker is
 reaped. Output is monitored against a 2 MiB budget; this is a polling limit, not
 an exact filesystem quota. Output hashes and bound input/controller identities
-are checked before successful completion. A zero exit alone is insufficient:
-stdout must also contain a SwiftPM manifest object.
+are checked before successful completion. Declared worker artifacts must also be
+regular files whose paths, byte counts, and hashes match the worker result. A
+specific status or evidence read rechecks every recorded output and detects
+post-completion tampering. Declared artifacts are capped at 64 MiB before hashing.
+A zero exit alone is insufficient: stdout must contain
+the operation's typed completion object (or a SwiftPM manifest for preflight).
 
 If a supervisor crashes and its worker hangs, the inherited lease deliberately
 keeps subsequent work blocked. This version does not guess that a recorded PID
 is still safe to kill. Normal timeout supervision is unavailable after that
 supervisor dies. These guarantees cover the registered direct worker and
 cooperating process-group descendants, not arbitrary detached subprocess trees.
-Model/GPU jobs are not enabled in this version.
+One state directory serializes its configured workers; GPU allocation across
+multiple state directories is not yet coordinated.
 
 **Verified and remaining**
 
@@ -172,23 +227,26 @@ Run the checks with:
 ```sh
 ruby Scripts/build-harness.rb test
 ruby Tests/HarnessIntegrationTests.rb
+ruby Tests/LagunaWorkerTests.rb
 ```
 
 The checks cover request validation, idempotency conflicts, input drift,
 cancellation, timeout, competing supervisors, malformed/oversized output,
 artifact tampering, corrupt state, and real process-level crash recovery. The
 integration suite also executes the real SwiftPM preflight through the bridge
-and verifies that dependency pins remain unchanged. No model inference or
-training is involved.
+and verifies that dependency pins remain unchanged. The Laguna worker suite uses
+a fake authenticated model server and generator to verify authorized-only
+selection, exact template bytes, checkpoint recovery, reviewed provenance, and
+declared vector binding without loading model weights.
 
-The installed CLIs report Pool 1.0.16 and Codex 0.142.5. Their shared skill layout
-is documented and the skill's frontmatter was validated. Actual model-driven
-Pool/Codex sessions, a specific local inference server, Linux compilation, and
-the full Swift/MLX engine build have not been tested by this milestone.
+The shared Pool/Codex skill layout and frontmatter are validated. The controller
+and Laguna runtime have been exercised on the Linux experiment host. The corrected
+reviewed-vector gate is contract-tested and awaits an eligible real pair. The full
+Swift/MLX engine build and a final accepted model remain separate.
 
-Multi-candidate experiments, the native model-preflight adapter, GPU resource
-coordination, training/evaluation/export submissions, calibrated judgments, and
-scientific acceptance remain future work. Their deterministic policy belongs in
-Swift. Keep refusal reduction, answer completion, task correctness, and capability
-retention distinct when adding those operations. Shared skills should continue
-to receive compact summaries and request detailed evidence only when needed.
+Multi-candidate experiments, the native model-preflight adapter, explicit GPU
+allocation across state directories, permanent-weight export, calibrated
+judgments, and scientific acceptance remain future work. Their deterministic
+policy belongs in Swift. Keep refusal reduction, answer completion, task
+correctness, and capability retention distinct. Shared skills should continue to
+receive compact summaries and request detailed evidence only when needed.
